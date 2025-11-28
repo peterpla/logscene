@@ -1213,9 +1213,8 @@ func Test_masterTLDefs_Delete(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var newMTLD *masterTLDefs
+			var newMTLD *masterTLDefs = tt.mtld.Delete(tt.prefix)
 
-			newMTLD = tt.mtld.Delete(tt.prefix)
 			if len(*newMTLD) != len(tt.want) {
 				t.Errorf("%s len(newMTLD) = %d, want %d [i.e., len(want)]", tt.name, len(*newMTLD), len(tt.want))
 			}

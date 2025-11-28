@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"html/template"
 	"io"
-	"io/ioutil"
 	"log"
 	"math/bits"
 	"net/http"
@@ -291,7 +290,6 @@ func (s *server) handleHome() httprouter.Handle {
 		srv.tmpl.ExecuteTemplate(w, "layout", data)
 
 		// log.Printf("%s.%s, duration %v\n", sn, mn, time.Now().Sub(startTime))
-		return
 	}
 }
 
@@ -403,7 +401,6 @@ func (s *server) handleNew() httprouter.Handle {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 
 		// log.Printf("%s.%s, duration %v\n", sn, mn, time.Now().Sub(startTime))
-		return
 	}
 }
 
@@ -413,9 +410,9 @@ func (s *server) initTemplates(dir string, ext string) {
 	sn := "initTemplates"
 
 	var allFiles []string
-	files, err := ioutil.ReadDir(dir)
+	files, err := os.ReadDir(dir)
 	if err != nil {
-		log.Fatalf("%s: ioutil.ReadDir(%q): %v\n", sn, dir, err)
+		log.Fatalf("%s: os.ReadDir(%q): %v\n", sn, dir, err)
 	}
 
 	// all files in specified directory with specified extension treated as templates
@@ -593,19 +590,19 @@ func (tld *TLDef) SetFirstLastFlags() error {
 	sn := "SetFirstLastFlags"
 
 	tld.FirstFlags = 0
-	if tld.FirstTime == true {
+	if tld.FirstTime {
 		tld.FirstFlags = tld.FirstFlags | firstTime
 		// log.Printf("%s, %s: FirstTime found, FirstFlags %b\n", sn, tld.Name, tld.FirstFlags)
 	}
-	if tld.FirstSunrise == true {
+	if tld.FirstSunrise {
 		tld.FirstFlags = tld.FirstFlags | firstSunrise
 		// log.Printf("%s, %s: FirstSunrise found, FirstFlags %b\n", sn, tld.Name, tld.FirstFlags)
 	}
-	if tld.FirstSunrise30 == true {
+	if tld.FirstSunrise30 {
 		tld.FirstFlags = tld.FirstFlags | firstSunrise30
 		// log.Printf("%s, %s: FirstSunrise30 found, FirstFlags %b\n", sn, tld.Name, tld.FirstFlags)
 	}
-	if tld.FirstSunrise60 == true {
+	if tld.FirstSunrise60 {
 		tld.FirstFlags = tld.FirstFlags | firstSunrise60
 		// log.Printf("%s, %s: FirstSunrise60 found, FirstFlags %b\n", sn, tld.Name, tld.FirstFlags)
 	}
@@ -614,19 +611,19 @@ func (tld *TLDef) SetFirstLastFlags() error {
 	}
 
 	tld.LastFlags = 0
-	if tld.LastTime == true {
+	if tld.LastTime {
 		tld.LastFlags = tld.LastFlags | lastTime
 		// log.Printf("%s, %s: LastTime found, LastFlags %b\n", sn, tld.Name, tld.LastFlags)
 	}
-	if tld.LastSunset == true {
+	if tld.LastSunset {
 		tld.LastFlags = tld.LastFlags | lastSunset
 		// log.Printf("%s, %s: LastSunset found, LastFlags %b\n", sn, tld.Name, tld.LastFlags)
 	}
-	if tld.LastSunset30 == true {
+	if tld.LastSunset30 {
 		tld.LastFlags = tld.LastFlags | lastSunset30
 		// log.Printf("%s, %s: LastSunset30 found, LastFlags %b\n", sn, tld.Name, tld.LastFlags)
 	}
-	if tld.LastSunset60 == true {
+	if tld.LastSunset60 {
 		tld.LastFlags = tld.LastFlags | lastSunset60
 		// log.Printf("%s, %s: LastSunset60 found, LastFlags %b\n", sn, tld.Name, tld.LastFlags)
 	}
@@ -710,7 +707,6 @@ func (tld *TLDef) SplitTime(first time.Time, last time.Time, n int) {
 		tld.CaptureTimes = append(tld.CaptureTimes, next)
 		base = next
 	}
-	return
 }
 
 // SetLastCapture adds LastTime or LastSunset to CaptureTimes
@@ -822,9 +818,9 @@ func newMasterTLDefs() *masterTLDefs {
 func (mtld masterTLDefs) Read(path string) error {
 	sn := "mtld.Read"
 
-	data, err := ioutil.ReadFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
-		log.Printf("%s, ioutil.ReadFile: %v\n", sn, err)
+		log.Printf("%s, os.ReadFile: %v\n", sn, err)
 		return err
 	}
 	if len(data) == 0 {
@@ -879,8 +875,8 @@ func (mtld masterTLDefs) Write() error {
 	}
 
 	filename := filepath.Join(masterPath, masterFile)
-	if err = ioutil.WriteFile(filename, buf, 0644); err != nil { // -rw-r--r--
-		log.Printf("%s, ioutil.WriteFile: %v\n", sn, err)
+	if err = os.WriteFile(filename, buf, 0644); err != nil { // -rw-r--r--
+		log.Printf("%s, os.WriteFile: %v\n", sn, err)
 		return err
 	}
 
@@ -958,9 +954,9 @@ func (tld *TLDef) GetSolarTimes(date time.Time) error {
 	}
 	defer resp.Body.Close()
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Printf("%s, %s ioutil.ReadAll: %v", sn, tld.Name, err)
+		log.Printf("%s, %s io.ReadAll: %v", sn, tld.Name, err)
 		return err
 	}
 	// log.Printf("%s, %s resp.Body: %s", sn, tld.Name, body)
@@ -1100,9 +1096,9 @@ func (tld *TLDef) SetWebcamTZ() error {
 	defer resp.Body.Close()
 
 	var body []byte
-	body, err = ioutil.ReadAll(resp.Body)
+	body, err = io.ReadAll(resp.Body)
 	if err != nil {
-		log.Printf("%s, %s ioutil.ReadAll: %v", sn, tld.Name, err)
+		log.Printf("%s, %s io.ReadAll: %v", sn, tld.Name, err)
 		return err
 	}
 	// log.Printf("%s, %s resp.Body: %s", sn, tld.Name, body)
