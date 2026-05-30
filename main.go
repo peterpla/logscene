@@ -1081,9 +1081,9 @@ func (tld *TLDef) SetWebcamTZ() error {
 	}
 
 	// log.Printf("%s, %s %s %s\n", sn, tld.Name, method, query)
+	client := &http.Client{Timeout: time.Second * 2}
 	var resp *http.Response
 	for {
-		client := &http.Client{Timeout: time.Second * 2}
 		resp, err = client.Do(req)
 		if err == nil && resp.StatusCode == http.StatusOK {
 			break

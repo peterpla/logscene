@@ -459,6 +459,7 @@ func TestNewTLDef(t *testing.T) {
 }
 
 func TestTLDef_SetCaptureTimes(t *testing.T) {
+	t.Skip("calls real TimeZoneDB API")
 	// layout := "Jan 2 2006 15:04:05 -0700 MST"
 	loc := time.Local
 
