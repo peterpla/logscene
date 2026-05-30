@@ -9,15 +9,26 @@
             "type": "go",
             "request": "launch",
             "mode": "test",
-            "program": "${fileDirname}"
+            "program": "C:\\Users\\peter\\OneDrive\\Coding\\Timelapse", // ${fileDirname} doesn't work here
+            "env": {
+                "path": "C:\\Users\\peter\\OneDrive\\Coding\\Timelapse",
+                "pollSecs": "60",
+                "port": "8099",
+                "tzdb_API": "5S8X2IU6BHU5"
+            }
         },
         {
             "name": "Launch",
             "type": "go",
             "request": "launch",
             "mode": "auto",
-            "program": "${fileDirname}",
-            "env": {},
+            "program": "C:\\Users\\peter\\OneDrive\\Coding\\Timelapse", // ${fileDirname} doesn't work here
+            "env": {
+                "path": "C:\\Users\\peter\\OneDrive\\Coding\\Timelapse",
+                "pollSecs": "60",
+                "port": "8099",
+                "tzdb_API": "5S8X2IU6BHU5"
+            },
             "args": []
         }
     ]

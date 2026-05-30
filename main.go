@@ -34,7 +34,7 @@ import (
 var srv *server
 
 const (
-	masterPath = "/Users/peterplamondon/Downloads/timelapse/"
+	masterPath = "C:\\Users\\peter\\OneDrive\\Coding\\timelapse" // TODO: assemble path to avoid platform-specific path separator issues
 	masterFile = "timelapse.json"
 	timeLayout = "2006-01-02T15:04:05Z" // ISO 8601; see https://sunrise-sunset.org/api, https://godoc.org/time#Time.Format and https://ednsquare.com/story/date-and-time-manipulation-golang-with-examples------cU1FjK
 )
@@ -81,7 +81,7 @@ func main() {
 	}
 
 	srv.initTemplates("./templates", ".html")
-	srv.router.ServeFiles("/static/*filepath", http.Dir("static"))
+	srv.router.ServeFiles("/static/*filepath", http.Dir("static")) // TODO: assemble path to avoid platform-specific path separator issues
 	srv.router.POST("/new", srv.handleNew())
 	srv.router.GET("/", srv.handleHome())
 
@@ -177,7 +177,7 @@ func (tld *TLDef) AdjustBackoff() {
 // CaptureImage retrieves the webcam image and saves it in the specified
 // folder
 func (tld *TLDef) CaptureImage() (string, int64, error) {
-	// sn := fmt.Sprintf("CaptureImage.%q", tld.Name)
+	sn := fmt.Sprintf("CaptureImage.%q", tld.Name)
 
 	newFile, err := os.Create(tld.TargetFileName())
 	if err != nil {
@@ -306,10 +306,10 @@ func (s *server) handleNew() httprouter.Handle {
 		}
 
 		// dump r.Form contents
-		// log.Println("After r.ParseForm(), r.Form values:")
-		// for key, value := range r.Form {
-		// 	log.Printf("%q: %q\n", key, value)
-		// }
+		log.Println("After r.ParseForm(), r.Form values:")
+		for key, value := range r.Form {
+			log.Printf("%q: %q\n", key, value)
+		}
 
 		tld := newTLDef()
 
@@ -387,7 +387,7 @@ func (s *server) handleNew() httprouter.Handle {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		// log.Printf("handleNew, TLDef: %+v", tld)
+		log.Printf("handleNew, TLDef: %+v", tld)
 
 		srv.mtld.Append(tld)
 		if err := srv.mtld.Write(); err != nil {
@@ -439,7 +439,7 @@ type Config struct {
 // Load populates Config with flag and environment variable values
 func (c *Config) Load() {
 
-	pflag.StringVar(&c.path, "path", "./", "path to folder containing timelapse.json")
+	pflag.StringVar(&c.path, "path", "./", "path to folder containing timelapse.json") // TODO: assemble to avoid platform-specific path separator issues
 	pflag.IntVar(&c.pollSecs, "poll", 60, "seconds between time checks")
 	pflag.StringVar(&c.port, "port", "8099", "HTTP port to listen on")
 	pflag.StringVar(&c.tzdbAPI, "tzdb", "", "API key for TimeZoneDB.com")
@@ -469,7 +469,7 @@ func (c *Config) Load() {
 	c.port = viper.GetString("port")
 	c.tzdbAPI = viper.GetString("tzdb_API")
 
-	// log.Printf("Config: %+v\n", c)
+	log.Printf("Config: %+v\n", c)
 }
 
 // ********** ********** ********** ********** ********** **********

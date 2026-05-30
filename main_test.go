@@ -29,7 +29,7 @@ func newBaseTLD() TLDef {
 		FirstFlags:   firstSunrise,
 		LastFlags:    lastSunset,
 		Additional:   1,
-		FolderPath:   "/Volumes/ExtFiles/OneDrive/Pictures/Timelapse/zzTest",
+		FolderPath:   "C:\\Users\\peter\\OneDrive\\Pictures\\Timelapse\\zzTest", // TODO: assemble path to avoid platform-specific path separator issues
 		CaptureTimes: CaptureTimes{sunrise, solarNoon, sunset},
 		NextCapture:  0,
 	}
@@ -52,7 +52,7 @@ func TestMain(m *testing.M) {
 	srv = newServer()
 	srv.ctx, srv.cancel = context.WithCancel(context.Background())
 
-	srv.initTemplates("./templates", ".html")
+	srv.initTemplates("./templates", ".html") //
 	srv.router.ServeFiles("/static/*filepath", http.Dir("static"))
 	srv.router.POST("/new", srv.handleNew())
 	srv.router.GET("/", srv.handleHome())
@@ -122,11 +122,11 @@ func TestTLDef_TargetFileName(t *testing.T) {
 	}{
 		{name: "sunrise",
 			tld:  &baseTLD,
-			want: baseTLD.FolderPath + "/" + baseTLD.Name + " " + "20200527053941",
+			want: baseTLD.FolderPath + "\\" + baseTLD.Name + " " + "20200527053941", // TODO: assemble path to avoid platform-specific path separator issues
 		},
 		{name: "sunset",
 			tld:  &otherTLD,
-			want: otherTLD.FolderPath + "/" + otherTLD.Name + " " + "20200527202715",
+			want: otherTLD.FolderPath + "\\" + otherTLD.Name + " " + "20200527202715", // TODO: assemble path to avoid platform-specific path separator issues
 		},
 	}
 	for _, tt := range tests {
@@ -210,7 +210,7 @@ func Test_server_handleNew(t *testing.T) {
 				"firstSunrise": "",
 				"lastSunset":   "",
 				"additional":   "0",
-				"folder":       "/Volumes/ExtFiles/OneDrive/Pictures/Timelapse/zzTest",
+				"folder":       "C:\\Users\\peter\\OneDrive\\Pictures\\Timelapse\\zzTest", // TODO: assemble path to avoid platform-specific path separator issues
 			},
 			wantStatus: http.StatusSeeOther,
 			substring:  []byte(""),
@@ -224,7 +224,7 @@ func Test_server_handleNew(t *testing.T) {
 				"firstSunrise": "",
 				"lastSunset":   "",
 				"additional":   "0",
-				"folder":       "/Volumes/ExtFiles/OneDrive/Pictures/Timelapse/zzTest",
+				"folder":       "C:\\Users\\peter\\OneDrive\\Pictures\\Timelapse\\zzTest", // TODO: assemble path to avoid platform-specific path separator issues
 			},
 			wantStatus: http.StatusBadRequest,
 			substring:  []byte(""),
@@ -238,7 +238,7 @@ func Test_server_handleNew(t *testing.T) {
 				"firstSunrise": "",
 				"lastSunset":   "",
 				"additional":   "0",
-				"folder":       "/Volumes/ExtFiles/OneDrive/Pictures/Timelapse/zzTest",
+				"folder":       "C:\\Users\\peter\\OneDrive\\Pictures\\Timelapse\\zzTest", // TODO: assemble path to avoid platform-specific path separator issues
 			},
 			wantStatus: http.StatusBadRequest,
 			substring:  []byte(""),
@@ -252,7 +252,7 @@ func Test_server_handleNew(t *testing.T) {
 				"firstSunrise": "",
 				"lastSunset":   "",
 				"additional":   "0",
-				"folder":       "/Volumes/ExtFiles/OneDrive/Pictures/Timelapse/zzTest",
+				"folder":       "C:\\Users\\peter\\OneDrive\\Pictures\\Timelapse\\zzTest", // TODO: assemble path to avoid platform-specific path separator issues
 			},
 			wantStatus: http.StatusBadRequest,
 			substring:  []byte(""),
@@ -266,7 +266,7 @@ func Test_server_handleNew(t *testing.T) {
 				"firstSunrise": "",
 				"lastSunset":   "",
 				"additional":   "0",
-				"folder":       "/Volumes/ExtFiles/OneDrive/Pictures/Timelapse/zzTest",
+				"folder":       "C:\\Users\\peter\\OneDrive\\Pictures\\Timelapse\\zzTest", // TODO: assemble path to avoid platform-specific path separator issues
 			},
 			wantStatus: http.StatusBadRequest,
 			substring:  []byte(""),
@@ -280,7 +280,7 @@ func Test_server_handleNew(t *testing.T) {
 				"firstSunrise": "",
 				"lastSunset":   "",
 				// "additional":   "0",
-				"folder": "/Volumes/ExtFiles/OneDrive/Pictures/Timelapse/zzTest",
+				"folder": "C:\\Users\\peter\\OneDrive\\Pictures\\Timelapse\\zzTest", // TODO: assemble path to avoid platform-specific path separator issues
 			},
 			wantStatus: http.StatusBadRequest,
 			substring:  []byte(""),
@@ -294,7 +294,7 @@ func Test_server_handleNew(t *testing.T) {
 				"firstSunrise": "",
 				"lastSunset":   "",
 				"additional":   "-1",
-				"folder":       "/Volumes/ExtFiles/OneDrive/Pictures/Timelapse/zzTest",
+				"folder":       "C:\\Users\\peter\\OneDrive\\Pictures\\Timelapse\\zzTest", // TODO: assemble path to avoid platform-specific path separator issues
 			},
 			wantStatus: http.StatusBadRequest,
 			substring:  []byte(""),
@@ -308,7 +308,7 @@ func Test_server_handleNew(t *testing.T) {
 				"firstSunrise": "",
 				"lastSunset":   "",
 				"additional":   "17",
-				"folder":       "/Volumes/ExtFiles/OneDrive/Pictures/Timelapse/zzTest",
+				"folder":       "C:\\Users\\peter\\OneDrive\\Pictures\\Timelapse\\zzTest", // TODO: assemble path to avoid platform-specific path separator issues
 			},
 			wantStatus: http.StatusBadRequest,
 			substring:  []byte(""),
@@ -322,7 +322,7 @@ func Test_server_handleNew(t *testing.T) {
 				"firstSunrise": "",
 				"lastSunset":   "",
 				"additional":   "0",
-				// "folder":       "/Volumes/ExtFiles/OneDrive/Pictures/Timelapse/zzTest",
+				// "folder":       "C:\\Users\\peter\\OneDrive\\Pictures\\Timelapse\\zzTest",
 			},
 			wantStatus: http.StatusBadRequest,
 			substring:  []byte(""),
@@ -336,7 +336,7 @@ func Test_server_handleNew(t *testing.T) {
 				"firstSunrise30": "",
 				"lastSunset30":   "",
 				"additional":     "0",
-				"folder":         "/Volumes/ExtFiles/OneDrive/Pictures/Timelapse/zzTest",
+				"folder":         "C:\\Users\\peter\\OneDrive\\Pictures\\Timelapse\\zzTest", // TODO: assemble path to avoid platform-specific path separator issues
 			},
 			wantStatus: http.StatusSeeOther,
 			substring:  []byte(""),
@@ -350,7 +350,7 @@ func Test_server_handleNew(t *testing.T) {
 				"firstSunrise60": "",
 				"lastSunset60":   "",
 				"additional":     "0",
-				"folder":         "/Volumes/ExtFiles/OneDrive/Pictures/Timelapse/zzTest",
+				"folder":         "C:\\Users\\peter\\OneDrive\\Pictures\\Timelapse\\zzTest", // TODO: assemble path to avoid platform-specific path separator issues
 			},
 			wantStatus: http.StatusSeeOther,
 			substring:  []byte(""),
@@ -486,7 +486,7 @@ func TestTLDef_SetCaptureTimes(t *testing.T) {
 				FirstFlags:   firstSunrise,
 				LastFlags:    lastSunset,
 				Additional:   1,
-				FolderPath:   "/Volumes/ExtFiles/OneDrive/Pictures/Timelapse/Kohm-Yah-mah-nee",
+				FolderPath:   "C:\\Users\\peter\\OneDrive\\Pictures\\Timelapse\\Kohm-Yah-mah-nee", // TODO: assemble path to avoid platform-specific path separator issues
 			},
 			day:     day1,
 			wantErr: false,
@@ -505,7 +505,7 @@ func TestTLDef_SetCaptureTimes(t *testing.T) {
 				FirstFlags:   firstSunrise,
 				LastFlags:    lastSunset,
 				Additional:   1,
-				FolderPath:   "/Volumes/ExtFiles/OneDrive/Pictures/Timelapse/Kohm-Yah-mah-nee",
+				FolderPath:   "C:\\Users\\peter\\OneDrive\\Pictures\\Timelapse\\Kohm-Yah-mah-nee", // TODO: assemble path to avoid platform-specific path separator issues
 				CaptureTimes: day1Capture,
 			},
 			day:     day2,
@@ -944,7 +944,7 @@ func TestTLDef_UpdateNextCapture(t *testing.T) {
 		FirstFlags:   firstSunrise,
 		LastFlags:    lastSunset,
 		Additional:   3,
-		FolderPath:   "/Volumes/ExtFiles/OneDrive/Pictures/Timelapse/zzTest",
+		FolderPath:   "C:\\Users\\peter\\OneDrive\\Pictures\\Timelapse\\zzTest", // TODO: assemble path to avoid platform-specific path separator issues
 		CaptureTimes: CaptureTimes{sunset, sunset.Add(-mins30), sunrise.Add(mins60), sunrise, solarNoon},
 		NextCapture:  0,
 	}
