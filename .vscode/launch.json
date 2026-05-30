@@ -11,7 +11,7 @@
             "mode": "test",
             "program": "C:\\Users\\peter\\OneDrive\\Coding\\Timelapse", // ${fileDirname} doesn't work here
             "env": {
-                "path": "C:\\Users\\peter\\OneDrive\\Coding\\Timelapse",
+                "TIMELAPSE_PATH": "C:\\Users\\peter\\OneDrive\\Coding\\Timelapse",
                 "pollSecs": "60",
                 "port": "8099",
                 "tzdb_API": "5S8X2IU6BHU5"
@@ -24,7 +24,7 @@
             "mode": "auto",
             "program": "C:\\Users\\peter\\OneDrive\\Coding\\Timelapse", // ${fileDirname} doesn't work here
             "env": {
-                "path": "C:\\Users\\peter\\OneDrive\\Coding\\Timelapse",
+                "TIMELAPSE_PATH": "C:\\Users\\peter\\OneDrive\\Coding\\Timelapse",
                 "pollSecs": "60",
                 "port": "8099",
                 "tzdb_API": "5S8X2IU6BHU5"

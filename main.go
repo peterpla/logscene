@@ -19,8 +19,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
+	_ "time/tzdata" // embed IANA timezone database for Windows
 
 	"github.com/c2h5oh/datasize"
 	"github.com/go-playground/validator"
@@ -34,7 +34,6 @@ import (
 var srv *server
 
 const (
-	masterPath = "C:\\Users\\peter\\OneDrive\\Coding\\timelapse" // TODO: assemble path to avoid platform-specific path separator issues
 	masterFile = "timelapse.json"
 	timeLayout = "2006-01-02T15:04:05Z" // ISO 8601; see https://sunrise-sunset.org/api, https://godoc.org/time#Time.Format and https://ednsquare.com/story/date-and-time-manipulation-golang-with-examples------cU1FjK
 )
@@ -61,7 +60,7 @@ func main() {
 
 	srv = newServer()
 
-	if err = srv.mtld.Read(filepath.Join(masterPath, masterFile)); err != nil {
+	if err = srv.mtld.Read(filepath.Join(srv.config.path, masterFile)); err != nil {
 		msg := fmt.Sprintf("%s, srv.mtld.Read: %v", sn, err)
 		panic(msg)
 	}
@@ -95,7 +94,7 @@ func main() {
 	go startListening(&hs, "main") // call ListenAndServe from a separate go routine so main can listen for signals
 
 	c := make(chan os.Signal, 1)
-	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(c, os.Interrupt)
 	defer func() { // on handled signals, cancel goroutines, wait and exit
 		signal.Stop(c)
 		srv.cancel()
@@ -168,7 +167,11 @@ func capture(ctx context.Context, tld *TLDef, pollInterval int) {
 func (tld *TLDef) AdjustBackoff() {
 	const maxBackoff = time.Minute * 10
 
-	tld.Backoff = tld.Backoff * 2 // keep increasing the backoff time until no error
+	if tld.Backoff == 0 {
+		tld.Backoff = int64(time.Second)
+	} else {
+		tld.Backoff *= 2
+	}
 	if time.Duration(tld.Backoff) > maxBackoff {
 		tld.Backoff = int64(maxBackoff)
 	}
@@ -177,7 +180,7 @@ func (tld *TLDef) AdjustBackoff() {
 // CaptureImage retrieves the webcam image and saves it in the specified
 // folder
 func (tld *TLDef) CaptureImage() (string, int64, error) {
-	sn := fmt.Sprintf("CaptureImage.%q", tld.Name)
+	// sn := fmt.Sprintf("CaptureImage.%q", tld.Name)
 
 	newFile, err := os.Create(tld.TargetFileName())
 	if err != nil {
@@ -467,7 +470,7 @@ func (c *Config) Load() {
 	c.path = viper.GetString("path")
 	c.pollSecs = viper.GetInt("poll")
 	c.port = viper.GetString("port")
-	c.tzdbAPI = viper.GetString("tzdb_API")
+	c.tzdbAPI = viper.GetString("tzdb")
 
 	log.Printf("Config: %+v\n", c)
 }
@@ -874,7 +877,7 @@ func (mtld masterTLDefs) Write() error {
 		return err
 	}
 
-	filename := filepath.Join(masterPath, masterFile)
+	filename := filepath.Join(srv.config.path, masterFile)
 	if err = os.WriteFile(filename, buf, 0644); err != nil { // -rw-r--r--
 		log.Printf("%s, os.WriteFile: %v\n", sn, err)
 		return err
