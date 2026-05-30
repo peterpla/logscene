@@ -57,7 +57,7 @@ func TestMain(m *testing.M) {
 	srv.router.POST("/new", srv.handleNew())
 	srv.router.GET("/", srv.handleHome())
 
-	if err = srv.mtld.Read(filepath.Join(masterPath, masterFile)); err != nil {
+	if err = srv.mtld.Read(filepath.Join(srv.config.path, masterFile)); err != nil {
 		msg := fmt.Sprintf("%s, srv.mtld.Read: %v", sn, err)
 		panic(msg)
 	}
@@ -1157,7 +1157,7 @@ func Test_masterTLDefs_Append(t *testing.T) {
 		}
 
 		lenMTLD := len(*(tt.mtld))
-		for i := 0; i < lenMTLD; i++ {
+		for i := range lenMTLD {
 			got := (*tt.mtld)[i]
 			want := (*tt.expected)[i]
 			if !reflect.DeepEqual(got, want) {

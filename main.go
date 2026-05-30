@@ -967,7 +967,7 @@ func (tld *TLDef) GetSolarTimes(date time.Time) error {
 	// strip off outer structure
 	wrapperStart := []byte(`{"results":`)
 	wrapperEnd := []byte(`,"status":"OK"}`)
-	if bytes.Index(body, wrapperStart) >= 0 {
+	if bytes.Contains(body, wrapperStart) {
 		tmpBody := bytes.TrimPrefix(body, wrapperStart)
 		body = bytes.TrimSuffix(tmpBody, wrapperEnd)
 	}
