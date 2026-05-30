@@ -526,7 +526,7 @@ func TestTLDef_SetCaptureTimes(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := tt.tld.SetCaptureTimes(tt.day); (err != nil) != tt.wantErr {
+			if err := tt.tld.SetCaptureTimes(context.Background(), tt.day); (err != nil) != tt.wantErr {
 				t.Errorf("TLDef.SetCaptureTimes() error = %v, wantErr %v", err, tt.wantErr)
 			} else {
 				got := tt.tld.CaptureTimes
@@ -999,7 +999,7 @@ func TestTLDef_UpdateNextCapture(t *testing.T) {
 			if tt.skip {
 				t.Skip("calls real TimeZoneDB API")
 			}
-			tt.tld.UpdateNextCapture(tt.refDate)
+			tt.tld.UpdateNextCapture(context.Background(), tt.refDate)
 			if tt.tld.NextCapture != tt.want {
 				t.Errorf("UpdateNextCapture() got %d, want %d", tt.tld.NextCapture, tt.want)
 			}
@@ -1289,7 +1289,7 @@ func TestTLDef_GetSolarTimes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var err error
-			if err = tt.tld.GetSolarTimes(tt.date); (err != nil) != tt.wantErr {
+			if err = tt.tld.GetSolarTimes(context.Background(), tt.date); (err != nil) != tt.wantErr {
 				t.Errorf("GetSolarTimes() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			if tt.tld.SunriseUTC != tt.want.SunriseUTC {

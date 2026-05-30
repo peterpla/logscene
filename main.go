@@ -15,7 +15,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -33,6 +32,11 @@ import (
 )
 
 var srv *server
+
+var (
+	apiHTTPClient   = &http.Client{Timeout: 2 * time.Second}
+	imageHTTPClient = &http.Client{Timeout: 10 * time.Second}
+)
 
 const (
 	masterFile = "timelapse.json"
@@ -65,8 +69,6 @@ func main() {
 		msg := fmt.Sprintf("%s, srv.mtld.Read: %v", sn, err)
 		panic(msg)
 	}
-
-	runtime.GOMAXPROCS(2)
 
 	// use context and cancel with goroutines to handle Ctrl+C
 	// TODO: add ctx to server struct, so availble when adding a new webcam and launching new go routine
@@ -128,12 +130,12 @@ func catch() {
 func capture(ctx context.Context, tld *TLDef, pollInterval int) {
 	sn := fmt.Sprintf("capture.%s", tld.Name)
 
-	if err := tld.SetCaptureTimes(time.Now()); err != nil {
+	if err := tld.SetCaptureTimes(ctx, time.Now()); err != nil {
 		log.Printf("%s, SetCaptureTimes: %v, exiting\n", sn, err)
 		srv.wg.Done()
 		return
 	}
-	tld.UpdateNextCapture(time.Now())
+	tld.UpdateNextCapture(ctx, time.Now())
 
 	log.Printf("%s, timezone %s, NextCapture %s, CaptureTimes (len %d): %v, FirstFlags %b, LastFlags %b\n",
 		sn, tld.WebcamTZ, tld.CaptureTimes[tld.NextCapture], len(tld.CaptureTimes), tld.CaptureTimes, tld.FirstFlags, tld.LastFlags)
@@ -151,7 +153,7 @@ func capture(ctx context.Context, tld *TLDef, pollInterval int) {
 					time.Sleep(time.Second * time.Duration(tld.Backoff))
 				}
 
-				createdName, createdSize, err := tld.CaptureImage()
+				createdName, createdSize, err := tld.CaptureImage(ctx)
 				if err != nil {
 					log.Printf("%s, CaptureImage: %v\n", sn, err)
 					tld.AdjustBackoff()
@@ -160,7 +162,7 @@ func capture(ctx context.Context, tld *TLDef, pollInterval int) {
 				tld.Backoff = 0 // after successful capture, no backoff
 				log.Printf("%s, %s created, size %s", sn, createdName, datasize.ByteSize(createdSize).HumanReadable())
 
-				tld.UpdateNextCapture(time.Now())
+				tld.UpdateNextCapture(ctx, time.Now())
 			}
 		}
 		// log.Printf("%s sleeping for %d seconds...\n", sn, pollInterval)
@@ -184,7 +186,7 @@ func (tld *TLDef) AdjustBackoff() {
 
 // CaptureImage retrieves the webcam image and saves it in the specified
 // folder
-func (tld *TLDef) CaptureImage() (string, int64, error) {
+func (tld *TLDef) CaptureImage(ctx context.Context) (string, int64, error) {
 	// sn := fmt.Sprintf("CaptureImage.%q", tld.Name)
 
 	newFile, err := os.Create(tld.TargetFileName())
@@ -192,8 +194,9 @@ func (tld *TLDef) CaptureImage() (string, int64, error) {
 		// log.Printf("%s os.Create: %v\n", sn, err)
 		return "", 0, err
 	}
+	defer newFile.Close()
 
-	respBody, err := tld.RetrieveImage()
+	respBody, err := tld.RetrieveImage(ctx)
 	if err != nil {
 		// log.Printf("%s RetrieveImage: %v\n", sn, err)
 		return "", 0, err
@@ -201,7 +204,6 @@ func (tld *TLDef) CaptureImage() (string, int64, error) {
 	defer respBody.Close()
 
 	written, err := io.Copy(newFile, respBody) // io.Copy buffers I/O to support huge files
-	defer newFile.Close()
 	if err != nil {
 		// log.Printf("%s io.Copy: %v\n", sn, err)
 		return "", 0, err
@@ -222,21 +224,24 @@ func (tld *TLDef) TargetFileName() string {
 
 // RetrieveImage retrieves the webcam image and returns resp.Body, for
 // reading and closing by the caller
-func (tld *TLDef) RetrieveImage() (io.ReadCloser, error) {
+func (tld *TLDef) RetrieveImage(ctx context.Context) (io.ReadCloser, error) {
 	// sn := fmt.Sprintf("RetrieveImage.%q", tld.Name)
 
-	webcamReq, err := http.NewRequest("GET", tld.URL, nil)
+	webcamReq, err := http.NewRequestWithContext(ctx, "GET", tld.URL, nil)
 	if err != nil {
 		// log.Printf("%s http.NewRequest: %v\n", sn, err)
 		return nil, err
 	}
 
-	client := &http.Client{Timeout: time.Second * 10}
-
-	resp, err := client.Do(webcamReq)
+	resp, err := imageHTTPClient.Do(webcamReq)
 	if err != nil {
 		// log.Printf("%s client.Do: %v\n", sn, err)
 		return nil, err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return nil, fmt.Errorf("RetrieveImage %s: unexpected status %s", tld.Name, resp.Status)
 	}
 
 	return resp.Body, nil
@@ -524,7 +529,7 @@ func newTLDef() *TLDef {
 
 // SetCaptureTimes calculate all capture times for the specified date
 // and initializes NextCapture
-func (tld *TLDef) SetCaptureTimes(date time.Time) error {
+func (tld *TLDef) SetCaptureTimes(ctx context.Context, date time.Time) error {
 	sn := "main.TLDef.SetCaptureTimes"
 	var err error
 
@@ -539,12 +544,12 @@ func (tld *TLDef) SetCaptureTimes(date time.Time) error {
 		tld.CaptureTimes = []time.Time{} // all existing TLDef times have passed, start with an empty slice (preferred so json.Marshal() will emit "[]")
 	}
 
-	if err = tld.SetWebcamTZ(); err != nil { // establish timezone of webcam
+	if err = tld.SetWebcamTZ(ctx); err != nil { // establish timezone of webcam
 		log.Printf("%s, %s: %v\n", sn, tld.Name, err)
 		return err
 	}
 
-	if err = tld.GetSolarTimes(date); err != nil { // set sunrise, solar noon, and sunset for specified date
+	if err = tld.GetSolarTimes(ctx, date); err != nil { // set sunrise, solar noon, and sunset for specified date
 		log.Printf("%s, %s: %v\n", sn, tld.Name, err)
 		return err
 	}
@@ -749,7 +754,7 @@ func (tld *TLDef) SetLastCapture() error {
 // next CaptureTime (first element with time > baseTime), or if none are left
 // (today's captures have all been performed), updates CaptureTimes with
 // tomorrow's capture times
-func (tld *TLDef) UpdateNextCapture(baseTime time.Time) {
+func (tld *TLDef) UpdateNextCapture(ctx context.Context, baseTime time.Time) {
 	sn := "UpdateNextCapture"
 
 	// log.Printf("%s, %s NextCapture: baseTime %v, IsSorted %t, NextCapture %d, CaptureTimes (len %d): %v\n",
@@ -773,7 +778,7 @@ func (tld *TLDef) UpdateNextCapture(baseTime time.Time) {
 	msg := ""
 	if tld.NextCapture >= len(tld.CaptureTimes) {
 		tomorrow := baseTime.AddDate(0, 0, 1)
-		tld.SetCaptureTimes(tomorrow) // setup tomorrow's capture times
+		tld.SetCaptureTimes(ctx, tomorrow) // setup tomorrow's capture times
 		tld.NextCapture = 0           // tomorrow's first time is next
 		msg = "CaptureTimes set for tomorrow;"
 	}
@@ -939,7 +944,7 @@ type SSDayInfo struct { // all times are UTC
 // GetSolarTimes uses the specified date and the TLDef's latitude/longitude
 // to establish sunrise, solar noon, and sunset times (UTC) and store
 // them in the TLDef
-func (tld *TLDef) GetSolarTimes(date time.Time) error {
+func (tld *TLDef) GetSolarTimes(ctx context.Context, date time.Time) error {
 	sn := "main.tld.GetSolarTimes"
 	// log.Printf("%s, %s date: %v\n", sn, tld.Name, date)
 
@@ -947,16 +952,14 @@ func (tld *TLDef) GetSolarTimes(date time.Time) error {
 	ssdi.Date = date
 
 	query := ssdi.buildQuery()
-	method := "GET"
-	req, err := http.NewRequest(method, query, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", query, nil)
 	if err != nil {
 		log.Printf("%s, %s http.NewRequest: %v\n", sn, tld.Name, err)
 		return err
 	}
 
 	// log.Printf("%s, %s %s %s\n", sn, tld.Name, method, query)
-	client := &http.Client{Timeout: time.Second * 2}
-	resp, err := client.Do(req)
+	resp, err := apiHTTPClient.Do(req)
 	if err != nil {
 		log.Printf("%s, %s http.Client.Do: %v", sn, tld.Name, err)
 		return err
@@ -1067,7 +1070,7 @@ func NewTimeZoneDB(tld *TLDef) *TimeZoneDB {
 // SetWebcamTZ determines and stores the timezone of the webcam
 // based on TLDef's latitude/longitude. It is called daily when
 // capture times for the day are set, to accomodate DST changes.
-func (tld *TLDef) SetWebcamTZ() error {
+func (tld *TLDef) SetWebcamTZ(ctx context.Context) error {
 	sn := "main.tld.SetWebcamTZ"
 
 	if srv.config.tzdbAPI == "" {
@@ -1075,30 +1078,27 @@ func (tld *TLDef) SetWebcamTZ() error {
 	}
 
 	var err error
-	var req *http.Request
 
 	tzdb := NewTimeZoneDB(tld)
-
 	query := tzdb.buildQuery(tld)
-	method := "GET"
-	req, err = http.NewRequest(method, query, nil)
-	if err != nil {
-		log.Printf("%s, %s http.NewRequest: %v\n", sn, tld.Name, err)
-		return err
-	}
 
-	// log.Printf("%s, %s %s %s\n", sn, tld.Name, method, query)
-	client := &http.Client{Timeout: time.Second * 2}
 	var resp *http.Response
 	for {
-		resp, err = client.Do(req)
-		if err == nil && resp.StatusCode == http.StatusOK {
-			break
+		var req *http.Request
+		req, err = http.NewRequestWithContext(ctx, "GET", query, nil)
+		if err != nil {
+			log.Printf("%s, %s http.NewRequest: %v\n", sn, tld.Name, err)
+			return err
 		}
+		resp, err = apiHTTPClient.Do(req)
 		if err != nil {
 			log.Printf("%s, %s http.Client.Do: %v", sn, tld.Name, err)
 			return err
 		}
+		if resp.StatusCode == http.StatusOK {
+			break
+		}
+		resp.Body.Close()
 		if resp.StatusCode == http.StatusTooManyRequests { // rate limited to 1 request/second
 			sleep := time.Duration(1+rand.Intn(4)) * time.Second
 			log.Printf("%s, %s received http.StatusTooMany (429), sleeping %v...\n", sn, tld.Name, sleep)
