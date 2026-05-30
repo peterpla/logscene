@@ -9,12 +9,26 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
+
+var testCleanupOnce sync.Once
+
+func cleanupTestEntries() {
+	testCleanupOnce.Do(func() {
+		newMTLD := srv.mtld.Delete("test")
+		srv.mtld = newMTLD
+		if err := srv.mtld.Write(); err != nil {
+			log.Printf("cleanupTestEntries: %v", err)
+		}
+	})
+}
 
 func newBaseTLD() TLDef {
 	return TLDef{
@@ -71,22 +85,18 @@ func TestMain(m *testing.M) {
 	mins30, _ = time.ParseDuration("30m")
 	mins60, _ = time.ParseDuration("60m")
 
-	// go startFramework(port) // call ListenAndServe from a separate go routine so main can listen for signals
-	// startFramework starts funcframework which calls ListenAndServe
-	// func startFramework(port string) {
-	// 	if err := funcframework.Start(port); err != nil {
-	// 		log.Fatalf("funcframework.Start: %v\n", err)
-	// 	}
-	// }
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt)
+	go func() {
+		<-c
+		log.Printf("%s: interrupted, cleaning up test entries...", sn)
+		cleanupTestEntries()
+		os.Exit(1)
+	}()
 
 	exitcode := m.Run()
 
-	newMTLD := srv.mtld.Delete("test")
-	srv.mtld = newMTLD
-
-	if err := srv.mtld.Write(); err != nil {
-		log.Printf("%s, %v", sn, err)
-	}
+	cleanupTestEntries()
 	os.Exit(exitcode)
 }
 
