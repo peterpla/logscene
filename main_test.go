@@ -999,7 +999,9 @@ func TestTLDef_UpdateNextCapture(t *testing.T) {
 			if tt.skip {
 				t.Skip("calls real TimeZoneDB API")
 			}
-			tt.tld.UpdateNextCapture(context.Background(), tt.refDate)
+			if err := tt.tld.UpdateNextCapture(context.Background(), tt.refDate); err != nil {
+				t.Errorf("UpdateNextCapture() unexpected error: %v", err)
+			}
 			if tt.tld.NextCapture != tt.want {
 				t.Errorf("UpdateNextCapture() got %d, want %d", tt.tld.NextCapture, tt.want)
 			}

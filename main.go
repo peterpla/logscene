@@ -135,7 +135,11 @@ func capture(ctx context.Context, tld *TLDef, pollInterval int) {
 		srv.wg.Done()
 		return
 	}
-	tld.UpdateNextCapture(ctx, time.Now())
+	if err := tld.UpdateNextCapture(ctx, time.Now()); err != nil {
+		log.Printf("%s, UpdateNextCapture: %v, exiting\n", sn, err)
+		srv.wg.Done()
+		return
+	}
 
 	log.Printf("%s, timezone %s, NextCapture %s, CaptureTimes (len %d): %v, FirstFlags %b, LastFlags %b\n",
 		sn, tld.WebcamTZ, tld.CaptureTimes[tld.NextCapture], len(tld.CaptureTimes), tld.CaptureTimes, tld.FirstFlags, tld.LastFlags)
@@ -149,8 +153,8 @@ func capture(ctx context.Context, tld *TLDef, pollInterval int) {
 		default:
 			if tld.IsTimeForCapture() {
 				if tld.Backoff > 0 {
-					log.Printf("%s, backing off %d seconds\n", sn, tld.Backoff)
-					time.Sleep(time.Second * time.Duration(tld.Backoff))
+					log.Printf("%s, backing off %v\n", sn, time.Duration(tld.Backoff))
+					time.Sleep(time.Duration(tld.Backoff))
 				}
 
 				createdName, createdSize, err := tld.CaptureImage(ctx)
@@ -162,7 +166,11 @@ func capture(ctx context.Context, tld *TLDef, pollInterval int) {
 				tld.Backoff = 0 // after successful capture, no backoff
 				log.Printf("%s, %s created, size %s", sn, createdName, datasize.ByteSize(createdSize).HumanReadable())
 
-				tld.UpdateNextCapture(ctx, time.Now())
+				if err := tld.UpdateNextCapture(ctx, time.Now()); err != nil {
+					log.Printf("%s, UpdateNextCapture: %v, exiting\n", sn, err)
+					srv.wg.Done()
+					return
+				}
 			}
 		}
 		// log.Printf("%s sleeping for %d seconds...\n", sn, pollInterval)
@@ -754,16 +762,11 @@ func (tld *TLDef) SetLastCapture() error {
 // next CaptureTime (first element with time > baseTime), or if none are left
 // (today's captures have all been performed), updates CaptureTimes with
 // tomorrow's capture times
-func (tld *TLDef) UpdateNextCapture(ctx context.Context, baseTime time.Time) {
+func (tld *TLDef) UpdateNextCapture(ctx context.Context, baseTime time.Time) error {
 	sn := "UpdateNextCapture"
-
-	// log.Printf("%s, %s NextCapture: baseTime %v, IsSorted %t, NextCapture %d, CaptureTimes (len %d): %v\n",
-	// 	sn, tld.Name, baseTime, sort.IsSorted(tld.CaptureTimes), tld.NextCapture, len(tld.CaptureTimes), tld.CaptureTimes)
 
 	if !sort.IsSorted(tld.CaptureTimes) {
 		sort.Sort(tld.CaptureTimes)
-		// log.Printf("%s, %s IsSorted %t, CaptureTimes (len %d): %v\n",
-		// 	sn, tld.Name, sort.IsSorted(tld.CaptureTimes), len(tld.CaptureTimes), tld.CaptureTimes)
 	}
 
 	tld.NextCapture = 0
@@ -775,20 +778,35 @@ func (tld *TLDef) UpdateNextCapture(ctx context.Context, baseTime time.Time) {
 		tld.NextCapture++
 	}
 
-	msg := ""
 	if tld.NextCapture >= len(tld.CaptureTimes) {
 		tomorrow := baseTime.AddDate(0, 0, 1)
-		tld.SetCaptureTimes(ctx, tomorrow) // setup tomorrow's capture times
-		tld.NextCapture = 0           // tomorrow's first time is next
-		msg = "CaptureTimes set for tomorrow;"
+
+		retryDelays := [...]time.Duration{5 * time.Second, 15 * time.Second, 30 * time.Second}
+		var err error
+		for i := 0; ; i++ {
+			if err = tld.SetCaptureTimes(ctx, tomorrow); err == nil {
+				break
+			}
+			if i >= len(retryDelays) {
+				log.Printf("%s, %s SetCaptureTimes failed after %d attempts: %v\n",
+					sn, tld.Name, len(retryDelays)+1, err)
+				return err
+			}
+			log.Printf("%s, %s SetCaptureTimes failed (attempt %d/%d): %v, retrying in %v\n",
+				sn, tld.Name, i+1, len(retryDelays)+1, err, retryDelays[i])
+			select {
+			case <-time.After(retryDelays[i]):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+
+		tld.NextCapture = 0
+		log.Printf("%s, %s CaptureTimes set for tomorrow; NextCapture: %d, CaptureTimes (len %d): %v\n",
+			sn, tld.Name, tld.NextCapture, len(tld.CaptureTimes), tld.CaptureTimes)
 	}
 
-	// log.Printf("%s, %s %s NextCapture: %d, CaptureTimes (len %d): %v\n",
-	// 	sn, tld.Name, msg, tld.NextCapture, len(tld.CaptureTimes), tld.CaptureTimes)
-	if msg != "" {
-		log.Printf("%s, %s %s NextCapture: %d, CaptureTimes (len %d): %v\n",
-			sn, tld.Name, msg, tld.NextCapture, len(tld.CaptureTimes), tld.CaptureTimes)
-	}
+	return nil
 }
 
 // NextCaptureTime returns the time of the next capture
