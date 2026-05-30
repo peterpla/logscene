@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"math/bits"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"os"
@@ -76,7 +77,7 @@ func main() {
 		// 	sn, i, tld.Name, tld.FirstFlags, tld.LastFlags)
 		srv.wg.Add(1)
 		go capture(srv.ctx, tld, srv.config.pollSecs)
-		time.Sleep(1 * time.Second) // respect TimeZoneDB.com limit 1 request/second
+		time.Sleep(2 * time.Second) // respect TimeZoneDB.com limit 1 request/second
 	}
 
 	srv.initTemplates("./templates", ".html")
@@ -1092,8 +1093,9 @@ func (tld *TLDef) SetWebcamTZ() error {
 			return err
 		}
 		if resp.StatusCode == http.StatusTooManyRequests { // rate limited to 1 request/second
-			log.Printf("%s, %s received http.StatusTooMany (429), sleeping 2 seconds...\n", sn, tld.Name)
-			time.Sleep(2 * time.Second)
+			sleep := time.Duration(1+rand.Intn(4)) * time.Second
+			log.Printf("%s, %s received http.StatusTooMany (429), sleeping %v...\n", sn, tld.Name, sleep)
+			time.Sleep(sleep)
 		}
 	}
 	defer resp.Body.Close()
