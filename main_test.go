@@ -1254,13 +1254,13 @@ func TestTLDef_GetSolarTimes(t *testing.T) {
 	if testDate, err = time.Parse(layoutDate, "May 27 2020"); err != nil {
 		t.Fatalf("time.Parse: %v", err)
 	}
-	if testSunrise, err = time.Parse(layoutDateAndTime, "May 27 2020 12:39:41 PM"); err != nil {
+	if testSunrise, err = time.Parse(layoutDateAndTime, "May 27 2020 12:38:27 PM"); err != nil {
 		t.Fatalf("time.Parse: %v", err)
 	}
-	if testSunset, err = time.Parse(layoutDateAndTime, "May 28 2020 3:27:15 AM"); err != nil {
+	if testSunset, err = time.Parse(layoutDateAndTime, "May 28 2020 3:28:22 AM"); err != nil {
 		t.Fatalf("time.Parse: %v", err)
 	}
-	if testSolarNoon, err = time.Parse(layoutDateAndTime, "May 27 2020 8:03:28 PM"); err != nil {
+	if testSolarNoon, err = time.Parse(layoutDateAndTime, "May 27 2020 8:03:24 PM"); err != nil {
 		t.Fatalf("time.Parse: %v", err)
 	}
 

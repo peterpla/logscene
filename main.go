@@ -128,7 +128,11 @@ func catch() {
 func capture(ctx context.Context, tld *TLDef, pollInterval int) {
 	sn := fmt.Sprintf("capture.%s", tld.Name)
 
-	tld.SetCaptureTimes(time.Now()) // calculate all capture times for today
+	if err := tld.SetCaptureTimes(time.Now()); err != nil {
+		log.Printf("%s, SetCaptureTimes: %v, exiting\n", sn, err)
+		srv.wg.Done()
+		return
+	}
 	tld.UpdateNextCapture(time.Now())
 
 	log.Printf("%s, timezone %s, NextCapture %s, CaptureTimes (len %d): %v, FirstFlags %b, LastFlags %b\n",
@@ -400,6 +404,7 @@ func (s *server) handleNew() httprouter.Handle {
 			return
 		}
 
+		srv.wg.Add(1)
 		go capture(srv.ctx, tld, srv.config.pollSecs)
 
 		http.Redirect(w, r, "/", http.StatusSeeOther)
@@ -965,36 +970,34 @@ func (tld *TLDef) GetSolarTimes(date time.Time) error {
 	}
 	// log.Printf("%s, %s resp.Body: %s", sn, tld.Name, body)
 
-	// strip off outer structure
-	wrapperStart := []byte(`{"results":`)
-	wrapperEnd := []byte(`,"status":"OK"}`)
-	if bytes.Contains(body, wrapperStart) {
-		tmpBody := bytes.TrimPrefix(body, wrapperStart)
-		body = bytes.TrimSuffix(tmpBody, wrapperEnd)
-	}
-	// log.Printf("%s, %s trimmed body: %s\n", sn, tld.Name, body)
-
 	// change each time's "+00:00" suffix to "Z" to clean up time.Parse result
 	body = bytes.ReplaceAll(body, []byte(`+00:00"`), []byte(`Z"`))
-	// log.Printf("%s, %s trimmed and Z-adjusted body: %s\n", sn, tld.Name, body)
 
-	if err := json.Unmarshal(body, &ssdi); err != nil { // unmarshall all provided fields
+	var wrapper struct {
+		Results SSDayInfo `json:"results"`
+		Status  string    `json:"status"`
+	}
+	if err := json.Unmarshal(body, &wrapper); err != nil {
 		log.Printf("%s, %s json.Unmarshal: %v", sn, tld.Name, err)
 		return err
 	}
 
-	if tld.SunriseUTC, err = time.Parse(timeLayout, ssdi.SSDISunrise); err != nil {
-		log.Printf("%s, %s time.Parse(%s): %v", sn, tld.Name, ssdi.SSDISunrise, err)
+	if wrapper.Status != "OK" {
+		return fmt.Errorf("%s, %s sunrise-sunset.org returned status: %s", sn, tld.Name, wrapper.Status)
+	}
+
+	if tld.SunriseUTC, err = time.Parse(timeLayout, wrapper.Results.SSDISunrise); err != nil {
+		log.Printf("%s, %s time.Parse(%s): %v", sn, tld.Name, wrapper.Results.SSDISunrise, err)
 		return err
 	}
 
-	if tld.SolarNoonUTC, err = time.Parse(timeLayout, ssdi.SSDISolarNoon); err != nil {
-		log.Printf("%s, %s time.Parse(%s): %v", sn, tld.Name, ssdi.SSDISolarNoon, err)
+	if tld.SolarNoonUTC, err = time.Parse(timeLayout, wrapper.Results.SSDISolarNoon); err != nil {
+		log.Printf("%s, %s time.Parse(%s): %v", sn, tld.Name, wrapper.Results.SSDISolarNoon, err)
 		return err
 	}
 
-	if tld.SunsetUTC, err = time.Parse(timeLayout, ssdi.SSDISunset); err != nil {
-		log.Printf("%s, %s time.Parse(%s): %v", sn, tld.Name, ssdi.SSDISunset, err)
+	if tld.SunsetUTC, err = time.Parse(timeLayout, wrapper.Results.SSDISunset); err != nil {
+		log.Printf("%s, %s time.Parse(%s): %v", sn, tld.Name, wrapper.Results.SSDISunset, err)
 		return err
 	}
 
