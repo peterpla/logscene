@@ -1,6 +1,6 @@
 module github.com/peterpla/timelapse
 
-go 1.25
+go 1.25.0
 
 require (
 	github.com/c2h5oh/datasize v0.0.0-20200112174442-28bbd4740fee
@@ -27,7 +27,7 @@ require (
 	github.com/spf13/jwalterweatherman v1.0.0 // indirect
 	github.com/subosito/gotenv v1.2.0 // indirect
 	golang.org/x/sys v0.38.0 // indirect
-	golang.org/x/text v0.3.3 // indirect
+	golang.org/x/text v0.37.0 // indirect
 	gopkg.in/check.v1 v1.0.0-20190902080502-41f04d3bba15 // indirect
 	gopkg.in/ini.v1 v1.51.0 // indirect
 	gopkg.in/yaml.v2 v2.2.8 // indirect
