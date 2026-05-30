@@ -964,6 +964,7 @@ func TestTLDef_UpdateNextCapture(t *testing.T) {
 		tld     *TLDef
 		refDate time.Time
 		want    int
+		skip    bool
 	}{
 		{name: "first",
 			tld:     &baseTLD,
@@ -989,11 +990,15 @@ func TestTLDef_UpdateNextCapture(t *testing.T) {
 			tld:     &baseTLD,
 			refDate: sunset.Add(mins30),
 			want:    0,
+			skip:    true, // calls real TimeZoneDB API via SetCaptureTimes
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.skip {
+				t.Skip("calls real TimeZoneDB API")
+			}
 			tt.tld.UpdateNextCapture(tt.refDate)
 			if tt.tld.NextCapture != tt.want {
 				t.Errorf("UpdateNextCapture() got %d, want %d", tt.tld.NextCapture, tt.want)

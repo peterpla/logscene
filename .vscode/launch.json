@@ -12,9 +12,9 @@
             "program": "C:\\Users\\peter\\OneDrive\\Coding\\Timelapse", // ${fileDirname} doesn't work here
             "env": {
                 "TIMELAPSE_PATH": "C:\\Users\\peter\\OneDrive\\Coding\\Timelapse",
-                "pollSecs": "60",
-                "port": "8099",
-                "tzdb_API": "5S8X2IU6BHU5"
+                "TIMELAPSE_POLL": "60",
+                "TIMELAPSE_PORT": "8099",
+                "TIMELAPSE_TZDB": "5S8X2IU6BHU5"
             }
         },
         {
@@ -25,9 +25,9 @@
             "program": "C:\\Users\\peter\\OneDrive\\Coding\\Timelapse", // ${fileDirname} doesn't work here
             "env": {
                 "TIMELAPSE_PATH": "C:\\Users\\peter\\OneDrive\\Coding\\Timelapse",
-                "pollSecs": "60",
-                "port": "8099",
-                "tzdb_API": "5S8X2IU6BHU5"
+                "TIMELAPSE_POLL": "60",
+                "TIMELAPSE_PORT": "8099",
+                "TIMELAPSE_TZDB": "5S8X2IU6BHU5"
             },
             "args": []
         }

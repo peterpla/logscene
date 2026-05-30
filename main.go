@@ -1067,6 +1067,10 @@ func NewTimeZoneDB(tld *TLDef) *TimeZoneDB {
 func (tld *TLDef) SetWebcamTZ() error {
 	sn := "main.tld.SetWebcamTZ"
 
+	if srv.config.tzdbAPI == "" {
+		return fmt.Errorf("%s, tzdbAPI not configured: set TIMELAPSE_TZDB environment variable", sn)
+	}
+
 	var err error
 	var req *http.Request
 
