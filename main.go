@@ -86,6 +86,8 @@ func main() {
 	srv.router.ServeFiles("/static/*filepath", http.Dir("static")) // TODO: assemble path to avoid platform-specific path separator issues
 	srv.router.POST("/new", srv.handleNew())
 	srv.router.GET("/", srv.handleHome())
+	srv.router.GET("/status", srv.handleStatus())
+	srv.router.GET("/next", srv.handleNext())
 
 	hs := http.Server{
 		Addr:         ":" + srv.config.port,
@@ -193,31 +195,46 @@ func (tld *TLDef) AdjustBackoff() {
 }
 
 // CaptureImage retrieves the webcam image and saves it in the specified
-// folder
+// folder. The image is fetched before the file is created so that HTTP
+// errors never leave an empty file on disk.
 func (tld *TLDef) CaptureImage(ctx context.Context) (string, int64, error) {
-	// sn := fmt.Sprintf("CaptureImage.%q", tld.Name)
-
-	newFile, err := os.Create(tld.TargetFileName())
+	respBody, contentType, err := tld.RetrieveImage(ctx)
 	if err != nil {
-		// log.Printf("%s os.Create: %v\n", sn, err)
-		return "", 0, err
-	}
-	defer newFile.Close()
-
-	respBody, err := tld.RetrieveImage(ctx)
-	if err != nil {
-		// log.Printf("%s RetrieveImage: %v\n", sn, err)
 		return "", 0, err
 	}
 	defer respBody.Close()
 
+	fileName := tld.TargetFileName() + extensionForContentType(contentType)
+	newFile, err := os.Create(fileName)
+	if err != nil {
+		return "", 0, err
+	}
+	defer newFile.Close()
+
 	written, err := io.Copy(newFile, respBody) // io.Copy buffers I/O to support huge files
 	if err != nil {
-		// log.Printf("%s io.Copy: %v\n", sn, err)
+		os.Remove(fileName) // discard partial file on copy failure
 		return "", 0, err
 	}
 
 	return newFile.Name(), written, nil
+}
+
+// extensionForContentType returns the file extension for a MIME type
+func extensionForContentType(contentType string) string {
+	ct := strings.TrimSpace(strings.SplitN(contentType, ";", 2)[0])
+	switch ct {
+	case "image/jpeg":
+		return ".jpg"
+	case "image/png":
+		return ".png"
+	case "image/gif":
+		return ".gif"
+	case "image/webp":
+		return ".webp"
+	default:
+		return ".jpg" // safe default for webcam images
+	}
 }
 
 // TargetFileName returns the full target path, appending the capture
@@ -230,43 +247,45 @@ func (tld *TLDef) TargetFileName() string {
 	return filepath.Join(tld.FolderPath, fileName)
 }
 
-// RetrieveImage retrieves the webcam image and returns resp.Body, for
-// reading and closing by the caller
-func (tld *TLDef) RetrieveImage(ctx context.Context) (io.ReadCloser, error) {
+// RetrieveImage retrieves the webcam image and returns resp.Body and
+// Content-Type for reading and closing by the caller
+func (tld *TLDef) RetrieveImage(ctx context.Context) (io.ReadCloser, string, error) {
 	// sn := fmt.Sprintf("RetrieveImage.%q", tld.Name)
 
 	webcamReq, err := http.NewRequestWithContext(ctx, "GET", tld.URL, nil)
 	if err != nil {
 		// log.Printf("%s http.NewRequest: %v\n", sn, err)
-		return nil, err
+		return nil, "", err
 	}
 
 	resp, err := imageHTTPClient.Do(webcamReq)
 	if err != nil {
 		// log.Printf("%s client.Do: %v\n", sn, err)
-		return nil, err
+		return nil, "", err
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		resp.Body.Close()
-		return nil, fmt.Errorf("RetrieveImage %s: unexpected status %s", tld.Name, resp.Status)
+		return nil, "", fmt.Errorf("RetrieveImage %s: unexpected status %s", tld.Name, resp.Status)
 	}
 
-	return resp.Body, nil
+	return resp.Body, resp.Header.Get("Content-Type"), nil
 }
 
 // ********** ********** ********** ********** ********** **********
 
 type server struct {
-	router   *httprouter.Router
-	validate *validator.Validate // use a single instance of Validate, it caches struct info
-	config   *Config
-	tmpl     *template.Template
-	localLoc *time.Location  // timezone where this code is running
-	mtld     *masterTLDefs   // timelapse definitions, read from/written to timelapse.json
-	ctx      context.Context // context used to cancel go routines
-	cancel   context.CancelFunc
-	wg       sync.WaitGroup
+	router    *httprouter.Router
+	validate  *validator.Validate // use a single instance of Validate, it caches struct info
+	config    *Config
+	tmpl      *template.Template
+	localLoc  *time.Location  // timezone where this code is running
+	mtld      *masterTLDefs   // timelapse definitions, read from/written to timelapse.json
+	ctx       context.Context // context used to cancel go routines
+	cancel    context.CancelFunc
+	wg        sync.WaitGroup
+	mu        sync.RWMutex // protects mtld slice and per-TLDef CaptureTimes/NextCapture
+	startTime time.Time
 }
 
 // newServer creates a new instance of server with router and validation
@@ -286,6 +305,7 @@ func newServer() *server {
 	}
 
 	s.mtld = newMasterTLDefs()
+	s.startTime = time.Now()
 
 	s.config = &Config{}
 	s.config.Load()
@@ -410,7 +430,9 @@ func (s *server) handleNew() httprouter.Handle {
 		}
 		log.Printf("handleNew, TLDef: %+v", tld)
 
+		srv.mu.Lock()
 		srv.mtld.Append(tld)
+		srv.mu.Unlock()
 		if err := srv.mtld.Write(); err != nil {
 			log.Printf("%s, srv.mtld.Write: %v\n", sn, err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -423,6 +445,65 @@ func (s *server) handleNew() httprouter.Handle {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 
 		// log.Printf("%s.%s, duration %v\n", sn, mn, time.Now().Sub(startTime))
+	}
+}
+
+// handleStatus returns JSON with app status, webcam count, and uptime
+func (s *server) handleStatus() httprouter.Handle {
+	return func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+		srv.mu.RLock()
+		webcams := len(*srv.mtld)
+		srv.mu.RUnlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(struct {
+			Status  string `json:"status"`
+			Webcams int    `json:"webcams"`
+			Uptime  string `json:"uptime"`
+		}{
+			Status:  "ok",
+			Webcams: webcams,
+			Uptime:  time.Since(srv.startTime).Truncate(time.Second).String(),
+		})
+	}
+}
+
+// handleNext returns JSON with the webcam name and time of the next scheduled capture
+func (s *server) handleNext() httprouter.Handle {
+	return func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+		srv.mu.RLock()
+		var nextName string
+		var nextTime time.Time
+		for _, tld := range *srv.mtld {
+			nc := tld.NextCapture
+			ct := tld.CaptureTimes
+			if nc >= len(ct) {
+				continue
+			}
+			t := ct[nc]
+			if nextTime.IsZero() || t.Before(nextTime) {
+				nextTime = t
+				nextName = tld.Name
+			}
+		}
+		srv.mu.RUnlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		if nextTime.IsZero() {
+			json.NewEncoder(w).Encode(struct {
+				Status string `json:"status"`
+			}{"no captures scheduled"})
+			return
+		}
+		json.NewEncoder(w).Encode(struct {
+			Webcam      string `json:"webcam"`
+			NextCapture string `json:"next_capture"`
+			In          string `json:"in"`
+		}{
+			Webcam:      nextName,
+			NextCapture: nextTime.Format(time.RFC3339),
+			In:          time.Until(nextTime).Truncate(time.Second).String(),
+		})
 	}
 }
 
@@ -543,14 +624,17 @@ func (tld *TLDef) SetCaptureTimes(ctx context.Context, date time.Time) error {
 
 	// log.Printf("%s, %s date: %v, CaptureTimes (len %d): %v\n", sn, tld.Name, date, len(tld.CaptureTimes), tld.CaptureTimes)
 
+	srv.mu.Lock()
 	lenCT := len(tld.CaptureTimes)
 	if lenCT > 0 {
 		if time.Now().Before(tld.CaptureTimes[lenCT-1]) {
 			msg := fmt.Sprintf("%s %s not all CaptureTimes have passed, tld.CaptureTimes: %v", sn, tld.Name, tld.CaptureTimes)
+			srv.mu.Unlock()
 			panic(msg)
 		}
 		tld.CaptureTimes = []time.Time{} // all existing TLDef times have passed, start with an empty slice (preferred so json.Marshal() will emit "[]")
 	}
+	srv.mu.Unlock()
 
 	if err = tld.SetWebcamTZ(ctx); err != nil { // establish timezone of webcam
 		log.Printf("%s, %s: %v\n", sn, tld.Name, err)
@@ -561,6 +645,9 @@ func (tld *TLDef) SetCaptureTimes(ctx context.Context, date time.Time) error {
 		log.Printf("%s, %s: %v\n", sn, tld.Name, err)
 		return err
 	}
+
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
 
 	if err := tld.SetFirstCapture(); err != nil {
 		log.Printf("%s, %s: %v\n", sn, tld.Name, err)
@@ -765,10 +852,10 @@ func (tld *TLDef) SetLastCapture() error {
 func (tld *TLDef) UpdateNextCapture(ctx context.Context, baseTime time.Time) error {
 	sn := "UpdateNextCapture"
 
+	srv.mu.Lock()
 	if !sort.IsSorted(tld.CaptureTimes) {
 		sort.Sort(tld.CaptureTimes)
 	}
-
 	tld.NextCapture = 0
 	now := baseTime.In(srv.localLoc)
 	for _, t := range tld.CaptureTimes {
@@ -777,10 +864,11 @@ func (tld *TLDef) UpdateNextCapture(ctx context.Context, baseTime time.Time) err
 		}
 		tld.NextCapture++
 	}
+	needsNewDay := tld.NextCapture >= len(tld.CaptureTimes)
+	tomorrow := baseTime.AddDate(0, 0, 1)
+	srv.mu.Unlock()
 
-	if tld.NextCapture >= len(tld.CaptureTimes) {
-		tomorrow := baseTime.AddDate(0, 0, 1)
-
+	if needsNewDay {
 		retryDelays := [...]time.Duration{5 * time.Second, 15 * time.Second, 30 * time.Second}
 		var err error
 		for i := 0; ; i++ {
@@ -801,9 +889,11 @@ func (tld *TLDef) UpdateNextCapture(ctx context.Context, baseTime time.Time) err
 			}
 		}
 
+		srv.mu.Lock()
 		tld.NextCapture = 0
 		log.Printf("%s, %s CaptureTimes set for tomorrow; NextCapture: %d, CaptureTimes (len %d): %v\n",
 			sn, tld.Name, tld.NextCapture, len(tld.CaptureTimes), tld.CaptureTimes)
+		srv.mu.Unlock()
 	}
 
 	return nil
