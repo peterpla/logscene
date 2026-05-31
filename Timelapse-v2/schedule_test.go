@@ -257,6 +257,50 @@ func TestSetCaptureTimes_errorOnFutureTimesRemaining(t *testing.T) {
 	}
 }
 
+// TestSetCaptureTimes_usesCachedTimezone verifies that when WebcamTZ is already
+// populated, the timezone client is never called.
+func TestSetCaptureTimes_usesCachedTimezone(t *testing.T) {
+	// Client returns an error — if it were called, SetCaptureTimes would fail.
+	tzClient := &fixedTimezoneClient{err: fmt.Errorf("should not be called")}
+	solar := &fixedSolarClient{times: laFixedSolar()}
+
+	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 0)
+	wc.WebcamTZ = "America/Los_Angeles" // pre-populated cache
+
+	ref := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	if err := wc.SetCaptureTimes(context.Background(), ref, tzClient, solar); err != nil {
+		t.Fatalf("SetCaptureTimes with cached timezone: %v", err)
+	}
+	wc.mu.RLock()
+	got := wc.WebcamTZ
+	wc.mu.RUnlock()
+	if got != "America/Los_Angeles" {
+		t.Errorf("WebcamTZ: want %q, got %q", "America/Los_Angeles", got)
+	}
+}
+
+// TestSetCaptureTimes_refetchesInvalidCachedTimezone verifies that an
+// unrecognizable stored timezone triggers a fresh API lookup.
+func TestSetCaptureTimes_refetchesInvalidCachedTimezone(t *testing.T) {
+	validTZ := "America/Los_Angeles"
+	tzClient := &fixedTimezoneClient{tz: validTZ}
+	solar := &fixedSolarClient{times: laFixedSolar()}
+
+	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 0)
+	wc.WebcamTZ = "Not/A/ValidZone" // bad cached value
+
+	ref := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	if err := wc.SetCaptureTimes(context.Background(), ref, tzClient, solar); err != nil {
+		t.Fatalf("SetCaptureTimes re-fetch: %v", err)
+	}
+	wc.mu.RLock()
+	got := wc.WebcamTZ
+	wc.mu.RUnlock()
+	if got != validTZ {
+		t.Errorf("WebcamTZ after re-fetch: want %q, got %q", validTZ, got)
+	}
+}
+
 func TestSetCaptureTimes_timezoneClientError(t *testing.T) {
 	tzClient := &fixedTimezoneClient{err: fmt.Errorf("tz lookup failed")}
 	solar := &fixedSolarClient{times: laFixedSolar()}

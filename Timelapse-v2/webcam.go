@@ -1,6 +1,6 @@
 package main
 
-// tldef.go defines Webcam (one webcam's capture configuration) and Webcams
+// webcam.go defines Webcam (one webcam's capture configuration) and Webcams
 // (the full list, backed by timelapse.json).
 //
 // Naming note: "Webcam" describes what this struct actually is — the settings
@@ -59,13 +59,13 @@ type Webcam struct {
 	LastTimeValue  string  `json:"lastTimeValue"`  // "HH:MM" in webcam local time; required when LastTime true
 	Additional     int     `json:"additional"`     // 0–16 extra captures between first and last
 	FolderPath     string  `json:"folder"         validate:"required"`
+	WebcamTZ       string  `json:"webcamTZ,omitempty"` // IANA timezone name, cached after first lookup
 
 	// --- runtime fields (not persisted) ---
 	mu           sync.RWMutex   `json:"-"`
 	FirstFlags   uint           `json:"-"` // bitmask derived from First* booleans
 	LastFlags    uint           `json:"-"` // bitmask derived from Last* booleans
-	WebcamTZ     string         `json:"-"` // IANA timezone name, e.g. "America/Los_Angeles"
-	WebcamLoc    *time.Location `json:"-"` // loaded from WebcamTZ
+	WebcamLoc    *time.Location `json:"-"` // loaded from WebcamTZ at runtime
 	SunriseUTC   time.Time      `json:"-"`
 	SolarNoonUTC time.Time      `json:"-"`
 	SunsetUTC    time.Time      `json:"-"`

@@ -31,22 +31,40 @@ func (wc *Webcam) SetCaptureTimes(
 	solarClient SolarClient,
 ) error {
 	// Guard: refuse to overwrite a schedule that still has future times.
+	// Also read the cached timezone under the same lock to avoid a separate RLock.
 	wc.mu.RLock()
 	n := len(wc.CaptureTimes)
 	if n > 0 && time.Now().Before(wc.CaptureTimes[n-1]) {
 		wc.mu.RUnlock()
 		return fmt.Errorf("SetCaptureTimes: %q still has future capture times", wc.Name)
 	}
+	cachedTZ := wc.WebcamTZ
 	wc.mu.RUnlock()
 
-	// 1. Fetch webcam timezone.
-	tz, err := tzClient.GetTimezone(ctx, wc.Latitude, wc.Longitude)
-	if err != nil {
-		return fmt.Errorf("SetCaptureTimes: GetTimezone: %w", err)
+	// 1. Resolve webcam timezone.
+	//    Use the cached IANA name when present — the timezone name never changes
+	//    for a fixed location, and DST is handled automatically by time.LoadLocation.
+	//    Only call the API on a cache miss or if the stored name is unrecognizable.
+	var tz string
+	var loc *time.Location
+	if cachedTZ != "" {
+		if l, err := time.LoadLocation(cachedTZ); err == nil {
+			tz, loc = cachedTZ, l
+		} else {
+			log.Printf("SetCaptureTimes: %q cached timezone %q unrecognized (%v), re-fetching",
+				wc.Name, cachedTZ, err)
+		}
 	}
-	loc, err := time.LoadLocation(tz)
-	if err != nil {
-		return fmt.Errorf("SetCaptureTimes: LoadLocation(%q): %w", tz, err)
+	if loc == nil {
+		var err error
+		tz, err = tzClient.GetTimezone(ctx, wc.Latitude, wc.Longitude)
+		if err != nil {
+			return fmt.Errorf("SetCaptureTimes: GetTimezone: %w", err)
+		}
+		loc, err = time.LoadLocation(tz)
+		if err != nil {
+			return fmt.Errorf("SetCaptureTimes: LoadLocation(%q): %w", tz, err)
+		}
 	}
 
 	// 2. Determine today's date *in the webcam's timezone* — this is the fix for

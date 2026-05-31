@@ -25,10 +25,28 @@ func capture(ctx context.Context, wc *Webcam, pollInterval time.Duration, srv *s
 	name := "capture." + wc.Name
 	defer srv.wg.Done()
 
+	// Note whether the timezone needs to be fetched so we can persist it afterward.
+	wc.mu.RLock()
+	tzWasEmpty := wc.WebcamTZ == ""
+	wc.mu.RUnlock()
+
 	if err := wc.SetCaptureTimes(ctx, time.Now(), srv.tz, srv.solar); err != nil {
 		log.Printf("%s: SetCaptureTimes failed: %v — exiting", name, err)
 		return
 	}
+
+	// If we just fetched the timezone for the first time, write it to
+	// timelapse.json so future startups skip the timezonedb.com API call.
+	if tzWasEmpty {
+		if err := srv.webcams.Write(srv.config.Path, srv.validate); err != nil {
+			log.Printf("%s: persist timezone to timelapse.json: %v", name, err)
+		} else {
+			wc.mu.RLock()
+			log.Printf("%s: cached timezone %q in timelapse.json", name, wc.WebcamTZ)
+			wc.mu.RUnlock()
+		}
+	}
+
 	if err := wc.UpdateNextCapture(ctx, time.Now(), srv.tz, srv.solar); err != nil {
 		log.Printf("%s: UpdateNextCapture failed: %v — exiting", name, err)
 		return
