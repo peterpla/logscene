@@ -26,7 +26,6 @@ import (
 	"github.com/go-playground/validator"
 	"github.com/julienschmidt/httprouter"
 	"github.com/monoculum/formam"
-	"github.com/peterpla/lead-expert/pkg/middleware"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 )
@@ -141,7 +140,7 @@ func main() {
 
 	hs := http.Server{
 		Addr:         ":" + srv.config.port,
-		Handler:      middleware.LogReqResp(srv.router),
+		Handler:      logReqResp(srv.router),
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
 	}
@@ -166,6 +165,16 @@ func startListening(hs *http.Server, sn string) {
 	if err := hs.ListenAndServe(); err != http.ErrServerClosed {
 		log.Fatalf("%s startListening, ListenAndServe returned err: %+v\n", sn, err)
 	}
+}
+
+// logReqResp is a minimal HTTP middleware that logs each request method, path,
+// and elapsed time, replacing the former lead-expert/pkg/middleware dependency.
+func logReqResp(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		next.ServeHTTP(w, r)
+		log.Printf("%s %s %v", r.Method, r.RequestURI, time.Since(start).Truncate(time.Millisecond))
+	})
 }
 
 // catch uses recover() and logs it
