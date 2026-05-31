@@ -166,11 +166,11 @@ func (s *server) handleNext() httprouter.Handle {
 }
 
 // handleLogs returns the last n lines of today's log file as plain text.
-// The number of lines can be controlled with the ?n= query parameter (default 100).
+// The number of lines can be controlled with the ?n= query parameter (default 20).
 // Useful when the server is running remotely and stdout is not accessible.
 func (s *server) handleLogs() httprouter.Handle {
 	return func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
-		n := 100
+		n := 20
 		if qn := r.URL.Query().Get("n"); qn != "" {
 			if parsed, err := strconv.Atoi(qn); err == nil && parsed > 0 {
 				n = parsed
