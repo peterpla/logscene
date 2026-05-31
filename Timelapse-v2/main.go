@@ -79,6 +79,7 @@ func main() {
 	srv.router.POST("/new", srv.handleNew())
 	srv.router.GET("/status", srv.handleStatus())
 	srv.router.GET("/next", srv.handleNext())
+	srv.router.GET("/logs", srv.handleLogs())
 	srv.router.POST("/render", srv.handleRender())
 
 	hs := &http.Server{

@@ -165,6 +165,35 @@ func (s *server) handleNext() httprouter.Handle {
 	}
 }
 
+// handleLogs returns the last n lines of today's log file as plain text.
+// The number of lines can be controlled with the ?n= query parameter (default 100).
+// Useful when the server is running remotely and stdout is not accessible.
+func (s *server) handleLogs() httprouter.Handle {
+	return func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+		n := 100
+		if qn := r.URL.Query().Get("n"); qn != "" {
+			if parsed, err := strconv.Atoi(qn); err == nil && parsed > 0 {
+				n = parsed
+			}
+		}
+
+		logPath := filepath.Join(s.config.LogDir, "timelapse-"+time.Now().Format("2006-01-02")+".log")
+		data, err := os.ReadFile(logPath)
+		if err != nil {
+			http.Error(w, "log file not available: "+err.Error(), http.StatusNotFound)
+			return
+		}
+
+		lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+		if len(lines) > n {
+			lines = lines[len(lines)-n:]
+		}
+
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		fmt.Fprintln(w, strings.Join(lines, "\n"))
+	}
+}
+
 // renderRequest is the JSON body for POST /render.
 type renderRequest struct {
 	Folder string `json:"folder"`

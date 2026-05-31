@@ -4,9 +4,12 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -22,7 +25,7 @@ func newTestServer(t *testing.T) *server {
 	s := &server{
 		router:    httprouter.New(),
 		validate:  validator.New(),
-		config:    &Config{Path: t.TempDir(), PollSecs: 60, Port: "9999"},
+		config:    &Config{Path: t.TempDir(), LogDir: t.TempDir(), PollSecs: 60, Port: "9999"},
 		webcams:   newWebcams(),
 		storage:   store,
 		renderer:  NewLocalRenderer(store),
@@ -138,6 +141,74 @@ func TestHandleNext_withCapture(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// GET /logs
+
+func TestHandleLogs_notFound(t *testing.T) {
+	srv := newTestServer(t)
+	srv.router.GET("/logs", srv.handleLogs())
+	// LogDir points at an empty temp dir — no log file exists yet.
+
+	req := httptest.NewRequest(http.MethodGet, "/logs", nil)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("want 404, got %d", w.Code)
+	}
+}
+
+func TestHandleLogs_returnsLines(t *testing.T) {
+	srv := newTestServer(t)
+	srv.router.GET("/logs", srv.handleLogs())
+
+	// Write a fake log file named for today.
+	logPath := filepath.Join(srv.config.LogDir, "timelapse-"+time.Now().Format("2006-01-02")+".log")
+	content := "line1\nline2\nline3\nline4\nline5\n"
+	if err := os.WriteFile(logPath, []byte(content), 0644); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/logs", nil)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", w.Code)
+	}
+	body := w.Body.String()
+	for _, line := range []string{"line1", "line3", "line5"} {
+		if !strings.Contains(body, line) {
+			t.Errorf("response missing %q: %s", line, body)
+		}
+	}
+}
+
+func TestHandleLogs_nParam(t *testing.T) {
+	srv := newTestServer(t)
+	srv.router.GET("/logs", srv.handleLogs())
+
+	// Write 10 lines; request only the last 3.
+	logPath := filepath.Join(srv.config.LogDir, "timelapse-"+time.Now().Format("2006-01-02")+".log")
+	var sb strings.Builder
+	for i := 1; i <= 10; i++ {
+		fmt.Fprintf(&sb, "line%d\n", i)
+	}
+	os.WriteFile(logPath, []byte(sb.String()), 0644)
+
+	req := httptest.NewRequest(http.MethodGet, "/logs?n=3", nil)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	body := w.Body.String()
+	// Should contain lines 8-10, not line1.
+	if strings.Contains(body, "line1\n") {
+		t.Errorf("response should not contain line1 when n=3: %s", body)
+	}
+	if !strings.Contains(body, "line10") {
+		t.Errorf("response should contain line10: %s", body)
+	}
+}
+
 // POST /new — validation
 // ---------------------------------------------------------------------------
 
