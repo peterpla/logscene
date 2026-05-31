@@ -38,7 +38,7 @@ func (s *server) handleNew() httprouter.Handle {
 		wc := newWebcam()
 		wc.Name = strings.TrimSpace(r.FormValue("name"))
 		wc.URL = strings.TrimSpace(r.FormValue("webcamUrl"))
-		wc.FolderPath = strings.TrimSpace(r.FormValue("folder"))
+		wc.Folder = strings.TrimSpace(r.FormValue("folder"))
 		wc.FirstTimeValue = r.FormValue("firstTimeValue")
 		wc.LastTimeValue = r.FormValue("lastTimeValue")
 
@@ -81,9 +81,10 @@ func (s *server) handleNew() httprouter.Handle {
 			return
 		}
 
-		// For local storage, ensure the destination directory exists.
+		// For local storage, pre-create the destination directory.
 		if _, ok := s.storage.(*LocalStorage); ok {
-			if err := os.MkdirAll(wc.FolderPath, 0755); err != nil {
+			dir := filepath.Join(s.config.BaseDir, wc.Folder)
+			if err := os.MkdirAll(dir, 0755); err != nil {
 				log.Printf("handleNew: MkdirAll: %v", err)
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return

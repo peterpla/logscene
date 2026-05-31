@@ -85,7 +85,7 @@ func capture(ctx context.Context, wc *Webcam, pollInterval time.Duration, srv *s
 				}
 			}
 
-			key, size, err := wc.CaptureImage(ctx, srv.fetcher, srv.storage)
+			key, size, err := wc.CaptureImage(ctx, srv.fetcher, srv.storage, srv.config.BaseDir)
 			if err != nil {
 				log.Printf("%s: CaptureImage: %v", name, err)
 				wc.AdjustBackoff()
@@ -108,14 +108,14 @@ func capture(ctx context.Context, wc *Webcam, pollInterval time.Duration, srv *s
 // The storage key is based on the *scheduled* capture time, not wall clock,
 // so the filename always matches the intended time even if the capture is late.
 // Returns the storage key and number of bytes written.
-func (wc *Webcam) CaptureImage(ctx context.Context, fetcher ImageFetcher, store Storage) (string, int64, error) {
+func (wc *Webcam) CaptureImage(ctx context.Context, fetcher ImageFetcher, store Storage, baseDir string) (string, int64, error) {
 	body, contentType, err := fetcher.Fetch(ctx, wc.URL)
 	if err != nil {
 		return "", 0, fmt.Errorf("CaptureImage: fetch: %w", err)
 	}
 	defer body.Close()
 
-	key := wc.targetKey() + extensionForContentType(contentType)
+	key := wc.targetKey(baseDir) + extensionForContentType(contentType)
 
 	counter := &countingReader{r: body}
 	if err := store.Write(ctx, key, counter); err != nil {
@@ -126,11 +126,11 @@ func (wc *Webcam) CaptureImage(ctx context.Context, fetcher ImageFetcher, store 
 
 // targetKey builds the storage key for the current scheduled capture:
 // "{FolderPath}/{Name} YYYYMMDDhhmmss"
-func (wc *Webcam) targetKey() string {
+func (wc *Webcam) targetKey(baseDir string) string {
 	wc.mu.RLock()
 	t := wc.CaptureTimes[wc.NextCapture]
 	wc.mu.RUnlock()
-	return wc.FolderPath + "/" + wc.Name + " " + t.UTC().Format("20060102150405")
+	return baseDir + "/" + wc.Folder + "/" + wc.Name + " " + t.UTC().Format("20060102150405")
 }
 
 // AdjustBackoff implements the exponential backoff policy:

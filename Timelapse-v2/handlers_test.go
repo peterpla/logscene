@@ -25,7 +25,7 @@ func newTestServer(t *testing.T) *server {
 	s := &server{
 		router:    httprouter.New(),
 		validate:  validator.New(),
-		config:    &Config{Path: t.TempDir(), LogDir: t.TempDir(), PollSecs: 60, Port: "9999"},
+		config:    &Config{Path: t.TempDir(), LogDir: t.TempDir(), BaseDir: t.TempDir(), PollSecs: 60, Port: "9999"},
 		webcams:   newWebcams(),
 		storage:   store,
 		renderer:  NewLocalRenderer(store),
@@ -221,7 +221,7 @@ func TestHandleNew_missingName(t *testing.T) {
 	form.Set("latitude", "37.77")
 	form.Set("longitude", "-122.42")
 	form.Set("additional", "0")
-	form.Set("folder", t.TempDir())
+	form.Set("folder", "test-cam")
 	form.Set("firstSunrise", "on")
 	form.Set("lastSunset", "on")
 
@@ -245,7 +245,7 @@ func TestHandleNew_invalidAdditional(t *testing.T) {
 	form.Set("latitude", "37.77")
 	form.Set("longitude", "-122.42")
 	form.Set("additional", "99")
-	form.Set("folder", t.TempDir())
+	form.Set("folder", "test-cam")
 	form.Set("firstSunrise", "on")
 	form.Set("lastSunset", "on")
 
@@ -269,7 +269,7 @@ func TestHandleNew_multipleFirstFlags(t *testing.T) {
 	form.Set("latitude", "37.77")
 	form.Set("longitude", "-122.42")
 	form.Set("additional", "0")
-	form.Set("folder", t.TempDir())
+	form.Set("folder", "test-cam")
 	form.Set("firstSunrise", "on")
 	form.Set("firstSunrise30", "on") // two first flags — invalid
 	form.Set("lastSunset", "on")

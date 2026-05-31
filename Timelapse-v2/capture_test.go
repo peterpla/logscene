@@ -111,6 +111,7 @@ func TestIsTimeForCapture_emptySchedule(t *testing.T) {
 
 func TestCaptureImage_success(t *testing.T) {
 	store := testStorage(t)
+	baseDir := t.TempDir()
 	fetcher := &mockImageFetcher{
 		data:        []byte("fake-jpeg-data"),
 		contentType: "image/jpeg",
@@ -120,7 +121,7 @@ func TestCaptureImage_success(t *testing.T) {
 	wc.CaptureTimes = []time.Time{time.Date(2026, 6, 1, 13, 0, 0, 0, time.UTC)}
 	wc.NextCapture = 0
 
-	key, size, err := wc.CaptureImage(context.Background(), fetcher, store)
+	key, size, err := wc.CaptureImage(context.Background(), fetcher, store, baseDir)
 	if err != nil {
 		t.Fatalf("CaptureImage: %v", err)
 	}
@@ -130,7 +131,7 @@ func TestCaptureImage_success(t *testing.T) {
 	if !strings.HasSuffix(key, ".jpg") {
 		t.Errorf("key %q should end in .jpg", key)
 	}
-	keys, _ := store.List(context.Background(), wc.FolderPath)
+	keys, _ := store.List(context.Background(), baseDir+"/"+wc.Folder)
 	if len(keys) != 1 {
 		t.Errorf("expected 1 stored key, got %d: %v", len(keys), keys)
 	}
@@ -138,17 +139,18 @@ func TestCaptureImage_success(t *testing.T) {
 
 func TestCaptureImage_fetchError(t *testing.T) {
 	store := testStorage(t)
+	baseDir := t.TempDir()
 	fetcher := &mockImageFetcher{err: errors.New("connection refused")}
 
 	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 0)
 	wc.CaptureTimes = []time.Time{time.Now()}
 	wc.NextCapture = 0
 
-	_, _, err := wc.CaptureImage(context.Background(), fetcher, store)
+	_, _, err := wc.CaptureImage(context.Background(), fetcher, store, baseDir)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	keys, _ := store.List(context.Background(), wc.FolderPath)
+	keys, _ := store.List(context.Background(), baseDir+"/"+wc.Folder)
 	if len(keys) != 0 {
 		t.Errorf("expected 0 stored keys on fetch error, got %d", len(keys))
 	}
@@ -156,6 +158,7 @@ func TestCaptureImage_fetchError(t *testing.T) {
 
 func TestCaptureImage_keyUsesScheduledTime(t *testing.T) {
 	store := testStorage(t)
+	baseDir := t.TempDir()
 	fetcher := &mockImageFetcher{data: []byte("img"), contentType: "image/png"}
 
 	scheduled := time.Date(2026, 6, 1, 14, 30, 0, 0, time.UTC)
@@ -164,7 +167,7 @@ func TestCaptureImage_keyUsesScheduledTime(t *testing.T) {
 	wc.CaptureTimes = []time.Time{scheduled}
 	wc.NextCapture = 0
 
-	key, _, err := wc.CaptureImage(context.Background(), fetcher, store)
+	key, _, err := wc.CaptureImage(context.Background(), fetcher, store, baseDir)
 	if err != nil {
 		t.Fatalf("CaptureImage: %v", err)
 	}

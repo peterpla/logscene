@@ -15,6 +15,7 @@ type Config struct {
 	TzdbAPI  string // timezonedb.com API key (required)
 	LogDir   string // directory for daily rotating log files
 	Storage  string // storage backend: "local", "gcs", "s3"
+	BaseDir  string // root storage location; webcam folder names are relative to this
 }
 
 // Load populates Config from flags, environment variables, and defaults.
@@ -26,6 +27,7 @@ func (c *Config) Load() {
 	pflag.StringVar(&c.TzdbAPI, "tzdb", "", "API key for timezonedb.com")
 	pflag.StringVar(&c.LogDir, "logdir", "./logs", "directory for daily log files")
 	pflag.StringVar(&c.Storage, "storage", "local", "storage backend: local, gcs, s3")
+	pflag.StringVar(&c.BaseDir, "base", "./captures", "root directory (or key prefix) for all captured images")
 
 	var help bool
 	pflag.BoolVarP(&help, "help", "h", false, "show usage information")
@@ -43,6 +45,7 @@ func (c *Config) Load() {
 	viper.BindPFlag("tzdb", pflag.Lookup("tzdb"))
 	viper.BindPFlag("logdir", pflag.Lookup("logdir"))
 	viper.BindPFlag("storage", pflag.Lookup("storage"))
+	viper.BindPFlag("base", pflag.Lookup("base"))
 
 	viper.SetEnvPrefix("timelapse")
 	viper.AutomaticEnv()
@@ -52,6 +55,7 @@ func (c *Config) Load() {
 	viper.BindEnv("tzdb")
 	viper.BindEnv("logdir")
 	viper.BindEnv("storage")
+	viper.BindEnv("base")
 
 	c.Path = viper.GetString("path")
 	c.PollSecs = viper.GetInt("poll")
@@ -59,7 +63,8 @@ func (c *Config) Load() {
 	c.TzdbAPI = viper.GetString("tzdb")
 	c.LogDir = viper.GetString("logdir")
 	c.Storage = viper.GetString("storage")
+	c.BaseDir = viper.GetString("base")
 
-	log.Printf("Config: path=%s poll=%d port=%s logdir=%s storage=%s tzdb_configured=%t",
-		c.Path, c.PollSecs, c.Port, c.LogDir, c.Storage, c.TzdbAPI != "")
+	log.Printf("Config: path=%s poll=%d port=%s logdir=%s storage=%s base=%s tzdb_configured=%t",
+		c.Path, c.PollSecs, c.Port, c.LogDir, c.Storage, c.BaseDir, c.TzdbAPI != "")
 }

@@ -105,7 +105,7 @@ func testWebcam(t *testing.T, firstFlag, lastFlag uint, additional int) *Webcam 
 	wc.Latitude = 37.77
 	wc.Longitude = -122.42
 	wc.Additional = additional
-	wc.FolderPath = t.TempDir()
+	wc.Folder = "test-cam"
 
 	wc.FirstFlags = firstFlag
 	wc.LastFlags = lastFlag
