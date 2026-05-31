@@ -1,7 +1,8 @@
 package main
 
-// capture_test.go tests CaptureImage, AdjustBackoff, IsTimeForCapture,
-// and UpdateNextCapture.
+// capture_test.go tests CaptureImage, the graduated outage-backoff methods
+// (recordFailure, recordSuccess, shouldAttemptNow, autoSuspendDue),
+// IsTimeForCapture, and UpdateNextCapture.
 
 import (
 	"context"
@@ -37,40 +38,192 @@ func TestExtensionForContentType(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// AdjustBackoff
+// recordFailure / recordSuccess
 // ---------------------------------------------------------------------------
 
-func TestAdjustBackoff_startsAtOneSecond(t *testing.T) {
+func TestRecordFailure_setsFirstFailure(t *testing.T) {
 	wc := newWebcam()
-	wc.Backoff = 0
-	wc.AdjustBackoff()
+	before := time.Now()
+	wc.recordFailure()
+	after := time.Now()
+
+	if wc.FirstFailure.IsZero() {
+		t.Fatal("FirstFailure should be set after first failure")
+	}
+	if wc.FirstFailure.Before(before) || wc.FirstFailure.After(after) {
+		t.Errorf("FirstFailure %v outside [%v, %v]", wc.FirstFailure, before, after)
+	}
 	if wc.Backoff != backoffInitial {
-		t.Errorf("want %v, got %v", backoffInitial, wc.Backoff)
+		t.Errorf("first failure: want Backoff=%v, got %v", backoffInitial, wc.Backoff)
 	}
 }
 
-func TestAdjustBackoff_doubles(t *testing.T) {
+func TestRecordFailure_doublesBackoffInTier1(t *testing.T) {
 	wc := newWebcam()
-	wc.Backoff = 0
-	for i := 0; i < 5; i++ {
-		wc.AdjustBackoff()
-	}
-	want := backoffInitial * (1 << 4) // 1s, 2s, 4s, 8s, 16s
+	wc.recordFailure() // Backoff = 1s
+	wc.recordFailure() // Backoff = 2s
+	wc.recordFailure() // Backoff = 4s
+	want := backoffInitial * 4
 	if wc.Backoff != want {
-		t.Errorf("after 5 calls: want %v, got %v", want, wc.Backoff)
+		t.Errorf("after 3 failures: want %v, got %v", want, wc.Backoff)
 	}
 }
 
-func TestAdjustBackoff_capsAtMax(t *testing.T) {
+func TestRecordFailure_capsBackoffAtMax(t *testing.T) {
 	wc := newWebcam()
+	wc.FirstFailure = time.Now() // within tier 1
 	wc.Backoff = backoffMax / 2
-	wc.AdjustBackoff()
+	wc.recordFailure()
 	if wc.Backoff != backoffMax {
-		t.Errorf("want max %v, got %v", backoffMax, wc.Backoff)
+		t.Errorf("want Backoff=%v, got %v", backoffMax, wc.Backoff)
 	}
-	wc.AdjustBackoff()
+	wc.recordFailure()
 	if wc.Backoff != backoffMax {
-		t.Errorf("should stay at max %v, got %v", backoffMax, wc.Backoff)
+		t.Errorf("Backoff should stay at max, got %v", wc.Backoff)
+	}
+}
+
+func TestRecordFailure_doesNotChangeBackoffInTier2(t *testing.T) {
+	wc := newWebcam()
+	wc.FirstFailure = time.Now().Add(-30 * time.Hour) // tier 2
+	wc.Backoff = backoffMax
+	wc.recordFailure()
+	if wc.Backoff != backoffMax {
+		t.Errorf("Backoff should not change in tier 2, got %v", wc.Backoff)
+	}
+}
+
+func TestRecordSuccess_resetsAllFields(t *testing.T) {
+	wc := newWebcam()
+	wc.FirstFailure = time.Now().Add(-time.Hour)
+	wc.LastAttempt = time.Now()
+	wc.Backoff = 5 * time.Second
+
+	wc.recordSuccess()
+
+	if !wc.FirstFailure.IsZero() {
+		t.Error("FirstFailure should be zero after success")
+	}
+	if !wc.LastAttempt.IsZero() {
+		t.Error("LastAttempt should be zero after success")
+	}
+	if wc.Backoff != 0 {
+		t.Errorf("Backoff should be 0 after success, got %v", wc.Backoff)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// shouldAttemptNow
+// ---------------------------------------------------------------------------
+
+func scheduledInPast(wc *Webcam) {
+	wc.CaptureTimes = []time.Time{time.Now().Add(-time.Minute)}
+	wc.NextCapture = 0
+}
+
+func TestShouldAttemptNow_noFailureStreak(t *testing.T) {
+	wc := newWebcam()
+	scheduledInPast(wc)
+	if !wc.shouldAttemptNow() {
+		t.Error("expected true with no failure streak")
+	}
+}
+
+func TestShouldAttemptNow_captureNotYetDue(t *testing.T) {
+	wc := newWebcam()
+	wc.CaptureTimes = []time.Time{time.Now().Add(time.Hour)}
+	wc.NextCapture = 0
+	if wc.shouldAttemptNow() {
+		t.Error("expected false when capture is in the future")
+	}
+}
+
+func TestShouldAttemptNow_tier1BackoffElapsed(t *testing.T) {
+	wc := newWebcam()
+	scheduledInPast(wc)
+	wc.FirstFailure = time.Now().Add(-time.Hour) // tier 1
+	wc.Backoff = 5 * time.Second
+	wc.LastAttempt = time.Now().Add(-10 * time.Second) // 10s > 5s backoff
+	if !wc.shouldAttemptNow() {
+		t.Error("expected true when tier-1 backoff has elapsed")
+	}
+}
+
+func TestShouldAttemptNow_tier1BackoffNotElapsed(t *testing.T) {
+	wc := newWebcam()
+	scheduledInPast(wc)
+	wc.FirstFailure = time.Now().Add(-time.Hour) // tier 1
+	wc.Backoff = 10 * time.Minute
+	wc.LastAttempt = time.Now().Add(-5 * time.Minute) // 5m < 10m backoff
+	if wc.shouldAttemptNow() {
+		t.Error("expected false when tier-1 backoff has not elapsed")
+	}
+}
+
+func TestShouldAttemptNow_tier2Ready(t *testing.T) {
+	wc := newWebcam()
+	scheduledInPast(wc)
+	wc.FirstFailure = time.Now().Add(-30 * time.Hour) // tier 2
+	wc.LastAttempt = time.Now().Add(-90 * time.Minute) // 90m > 1h
+	if !wc.shouldAttemptNow() {
+		t.Error("expected true when tier-2 hour interval has elapsed")
+	}
+}
+
+func TestShouldAttemptNow_tier2NotReady(t *testing.T) {
+	wc := newWebcam()
+	scheduledInPast(wc)
+	wc.FirstFailure = time.Now().Add(-30 * time.Hour) // tier 2
+	wc.LastAttempt = time.Now().Add(-30 * time.Minute) // 30m < 1h
+	if wc.shouldAttemptNow() {
+		t.Error("expected false when tier-2 hour interval has not elapsed")
+	}
+}
+
+func TestShouldAttemptNow_tier3Ready(t *testing.T) {
+	wc := newWebcam()
+	scheduledInPast(wc)
+	wc.FirstFailure = time.Now().Add(-5 * 24 * time.Hour) // tier 3
+	wc.LastAttempt = time.Now().Add(-25 * time.Hour) // 25h > 24h
+	if !wc.shouldAttemptNow() {
+		t.Error("expected true when tier-3 day interval has elapsed")
+	}
+}
+
+func TestShouldAttemptNow_tier3NotReady(t *testing.T) {
+	wc := newWebcam()
+	scheduledInPast(wc)
+	wc.FirstFailure = time.Now().Add(-5 * 24 * time.Hour) // tier 3
+	wc.LastAttempt = time.Now().Add(-12 * time.Hour) // 12h < 24h
+	if wc.shouldAttemptNow() {
+		t.Error("expected false when tier-3 day interval has not elapsed")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// autoSuspendDue
+// ---------------------------------------------------------------------------
+
+func TestAutoSuspendDue_noStreak(t *testing.T) {
+	wc := newWebcam()
+	if wc.autoSuspendDue() {
+		t.Error("expected false with no failure streak")
+	}
+}
+
+func TestAutoSuspendDue_belowThreshold(t *testing.T) {
+	wc := newWebcam()
+	wc.FirstFailure = time.Now().Add(-13 * 24 * time.Hour) // 13 days
+	if wc.autoSuspendDue() {
+		t.Error("expected false at 13 days (threshold is 14)")
+	}
+}
+
+func TestAutoSuspendDue_atThreshold(t *testing.T) {
+	wc := newWebcam()
+	wc.FirstFailure = time.Now().Add(-15 * 24 * time.Hour) // 15 days
+	if !wc.autoSuspendDue() {
+		t.Error("expected true at 15 days (threshold is 14)")
 	}
 }
 

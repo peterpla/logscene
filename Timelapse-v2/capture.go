@@ -1,8 +1,20 @@
 package main
 
-// capture.go contains the per-webcam goroutine, image retrieval, backoff policy,
-// and the logic that advances to the next capture time (rolling over to tomorrow
-// when today's schedule is exhausted).
+// capture.go contains the per-webcam goroutine, image retrieval, and the
+// graduated outage-backoff policy.
+//
+// Outage tiers (time since first consecutive failure):
+//
+//	0 – 24 h      exponential backoff, capped at 10 min  (tier 1)
+//	24 h – 2 d    retry once per hour                    (tier 2)
+//	2 d – 2 weeks retry once per day                     (tier 3)
+//	> 2 weeks     auto-suspend: goroutine exits with a   (tier 4)
+//	              prominent log message; set
+//	              "disabled": true in timelapse.json to
+//	              suppress on restart, or restart the
+//	              server to try again.
+//
+// On success at any tier, all failure tracking resets immediately.
 
 import (
 	"context"
@@ -16,16 +28,23 @@ import (
 const (
 	backoffInitial = 1 * time.Second
 	backoffMax     = 10 * time.Minute
+
+	outageTier2After    = 24 * time.Hour       // switch from exponential to hourly
+	outageTier3After    = 48 * time.Hour       // switch from hourly to daily
+	outageAutoSuspendAfter = 14 * 24 * time.Hour // exit goroutine after 2 weeks
 )
 
-// capture is the long-running goroutine for one webcam. It polls on the
-// configured interval and captures an image whenever the scheduled time arrives.
-// It calls srv.wg.Done() before returning so the WaitGroup is always balanced.
+// capture is the long-running goroutine for one webcam.
 func capture(ctx context.Context, wc *Webcam, pollInterval time.Duration, srv *server) {
 	name := "capture." + wc.Name
 	defer srv.wg.Done()
 
-	// Note whether the timezone needs to be fetched so we can persist it afterward.
+	if wc.Disabled {
+		log.Printf("%s: webcam is disabled — skipping", name)
+		return
+	}
+
+	// Note whether timezone needs to be fetched so we can persist it afterward.
 	wc.mu.RLock()
 	tzWasEmpty := wc.WebcamTZ == ""
 	wc.mu.RUnlock()
@@ -35,8 +54,6 @@ func capture(ctx context.Context, wc *Webcam, pollInterval time.Duration, srv *s
 		return
 	}
 
-	// If we just fetched the timezone for the first time, write it to
-	// timelapse.json so future startups skip the timezonedb.com API call.
 	if tzWasEmpty {
 		if err := srv.webcams.Write(srv.config.Path, srv.validate); err != nil {
 			log.Printf("%s: persist timezone to timelapse.json: %v", name, err)
@@ -67,33 +84,31 @@ func capture(ctx context.Context, wc *Webcam, pollInterval time.Duration, srv *s
 			log.Printf("%s: context cancelled — exiting", name)
 			return
 		case <-ticker.C:
-			if !wc.IsTimeForCapture() {
-				continue
+			if wc.autoSuspendDue() {
+				log.Printf("%s: auto-suspended after %v of consecutive failures — goroutine exiting.\n"+
+					"  Set \"disabled\": true in timelapse.json to suppress on restart,\n"+
+					"  or restart the server to try again.",
+					name, outageAutoSuspendAfter)
+				return
 			}
 
-			// Apply backoff before attempting the capture.
-			wc.mu.RLock()
-			backoff := wc.Backoff
-			wc.mu.RUnlock()
-			if backoff > 0 {
-				log.Printf("%s: backing off %v", name, backoff)
-				select {
-				case <-time.After(backoff):
-				case <-ctx.Done():
-					log.Printf("%s: context cancelled during backoff — exiting", name)
-					return
-				}
+			if !wc.shouldAttemptNow() {
+				continue
 			}
 
 			key, size, err := wc.CaptureImage(ctx, srv.fetcher, srv.storage, srv.config.BaseDir)
 			if err != nil {
-				log.Printf("%s: CaptureImage: %v", name, err)
-				wc.AdjustBackoff()
+				wc.recordFailure()
+				wc.mu.RLock()
+				since := time.Since(wc.FirstFailure).Truncate(time.Minute)
+				next := wc.nextRetryInterval()
+				wc.mu.RUnlock()
+				log.Printf("%s: CaptureImage failed (failing %v, next attempt in %v): %v",
+					name, since, next, err)
 				continue
 			}
-			wc.mu.Lock()
-			wc.Backoff = 0
-			wc.mu.Unlock()
+
+			wc.recordSuccess()
 			log.Printf("%s: captured %s (%d bytes)", name, key, size)
 
 			if err := wc.UpdateNextCapture(ctx, time.Now(), srv.tz, srv.solar); err != nil {
@@ -104,53 +119,94 @@ func capture(ctx context.Context, wc *Webcam, pollInterval time.Duration, srv *s
 	}
 }
 
-// CaptureImage fetches one image from the webcam and writes it to storage.
-// The storage key is based on the *scheduled* capture time, not wall clock,
-// so the filename always matches the intended time even if the capture is late.
-// Returns the storage key and number of bytes written.
-func (wc *Webcam) CaptureImage(ctx context.Context, fetcher ImageFetcher, store Storage, baseDir string) (string, int64, error) {
-	body, contentType, err := fetcher.Fetch(ctx, wc.URL)
-	if err != nil {
-		return "", 0, fmt.Errorf("CaptureImage: fetch: %w", err)
-	}
-	defer body.Close()
-
-	key := wc.targetKey(baseDir) + extensionForContentType(contentType)
-
-	counter := &countingReader{r: body}
-	if err := store.Write(ctx, key, counter); err != nil {
-		return "", 0, fmt.Errorf("CaptureImage: store: %w", err)
-	}
-	return key, counter.n, nil
-}
-
-// targetKey builds the storage key for the current scheduled capture:
-// "{FolderPath}/{Name} YYYYMMDDhhmmss"
-func (wc *Webcam) targetKey(baseDir string) string {
+// shouldAttemptNow returns true if a capture is overdue AND enough time has
+// elapsed since the last attempt per the current outage tier.
+// Calling this without a failure streak is equivalent to IsTimeForCapture.
+func (wc *Webcam) shouldAttemptNow() bool {
 	wc.mu.RLock()
-	t := wc.CaptureTimes[wc.NextCapture]
-	wc.mu.RUnlock()
-	return baseDir + "/" + wc.Folder + "/" + wc.Name + " " + t.UTC().Format("20060102150405")
+	defer wc.mu.RUnlock()
+
+	if wc.NextCapture >= len(wc.CaptureTimes) {
+		return false
+	}
+	if !time.Now().After(wc.CaptureTimes[wc.NextCapture]) {
+		return false
+	}
+	if wc.FirstFailure.IsZero() {
+		return true // no active failure streak — attempt immediately
+	}
+	interval := wc.currentRetryInterval()
+	if interval == 0 {
+		return true
+	}
+	return time.Since(wc.LastAttempt) >= interval
 }
 
-// AdjustBackoff implements the exponential backoff policy:
-// start at 1 s, double on each failure, cap at 10 min.
-func (wc *Webcam) AdjustBackoff() {
+// autoSuspendDue returns true once the failure streak has lasted 2 weeks.
+func (wc *Webcam) autoSuspendDue() bool {
+	wc.mu.RLock()
+	defer wc.mu.RUnlock()
+	return !wc.FirstFailure.IsZero() && time.Since(wc.FirstFailure) >= outageAutoSuspendAfter
+}
+
+// currentRetryInterval returns the retry interval for the current outage tier.
+// Must be called with wc.mu held (read or write).
+func (wc *Webcam) currentRetryInterval() time.Duration {
+	if wc.FirstFailure.IsZero() {
+		return 0
+	}
+	switch elapsed := time.Since(wc.FirstFailure); {
+	case elapsed < outageTier2After:
+		return wc.Backoff // tier 1: exponential, up to 10 min
+	case elapsed < outageTier3After:
+		return time.Hour // tier 2: once per hour
+	default:
+		return 24 * time.Hour // tier 3: once per day
+	}
+}
+
+// nextRetryInterval is the public wrapper used for logging (acquires the lock).
+func (wc *Webcam) nextRetryInterval() time.Duration {
+	return wc.currentRetryInterval()
+}
+
+// recordFailure updates failure tracking after a failed capture attempt.
+// It sets FirstFailure on the first call and updates exponential backoff
+// while in tier 1; tiers 2 and 3 use fixed intervals so Backoff is not changed.
+func (wc *Webcam) recordFailure() {
 	wc.mu.Lock()
 	defer wc.mu.Unlock()
 
-	if wc.Backoff == 0 {
-		wc.Backoff = backoffInitial
-	} else {
-		wc.Backoff *= 2
+	if wc.FirstFailure.IsZero() {
+		wc.FirstFailure = time.Now()
 	}
-	if wc.Backoff > backoffMax {
-		wc.Backoff = backoffMax
+	wc.LastAttempt = time.Now()
+
+	// Only advance exponential backoff in tier 1.
+	if time.Since(wc.FirstFailure) < outageTier2After {
+		if wc.Backoff == 0 {
+			wc.Backoff = backoffInitial
+		} else {
+			wc.Backoff *= 2
+		}
+		if wc.Backoff > backoffMax {
+			wc.Backoff = backoffMax
+		}
 	}
 }
 
+// recordSuccess resets all failure tracking after a successful capture.
+func (wc *Webcam) recordSuccess() {
+	wc.mu.Lock()
+	defer wc.mu.Unlock()
+	wc.FirstFailure = time.Time{}
+	wc.LastAttempt = time.Time{}
+	wc.Backoff = 0
+}
+
 // IsTimeForCapture returns true if the current wall-clock time is at or past
-// the next scheduled capture time.
+// the next scheduled capture time, ignoring outage backoff.
+// Use shouldAttemptNow in the capture goroutine; this is for simple checks elsewhere.
 func (wc *Webcam) IsTimeForCapture() bool {
 	wc.mu.RLock()
 	defer wc.mu.RUnlock()
@@ -167,10 +223,32 @@ func (wc *Webcam) NextCaptureTime() time.Time {
 	return wc.CaptureTimes[wc.NextCapture]
 }
 
+// CaptureImage fetches one image from the webcam and writes it to storage.
+func (wc *Webcam) CaptureImage(ctx context.Context, fetcher ImageFetcher, store Storage, baseDir string) (string, int64, error) {
+	body, contentType, err := fetcher.Fetch(ctx, wc.URL)
+	if err != nil {
+		return "", 0, fmt.Errorf("CaptureImage: fetch: %w", err)
+	}
+	defer body.Close()
+
+	key := wc.targetKey(baseDir) + extensionForContentType(contentType)
+
+	counter := &countingReader{r: body}
+	if err := store.Write(ctx, key, counter); err != nil {
+		return "", 0, fmt.Errorf("CaptureImage: store: %w", err)
+	}
+	return key, counter.n, nil
+}
+
+// targetKey builds the storage key: baseDir/folder/Name YYYYMMDDhhmmss
+func (wc *Webcam) targetKey(baseDir string) string {
+	wc.mu.RLock()
+	t := wc.CaptureTimes[wc.NextCapture]
+	wc.mu.RUnlock()
+	return baseDir + "/" + wc.Folder + "/" + wc.Name + " " + t.UTC().Format("20060102150405")
+}
+
 // UpdateNextCapture advances NextCapture to the first future time in CaptureTimes.
-// If all times have passed it computes tomorrow's schedule, retrying up to 3 times.
-// "Tomorrow" is computed in the webcam's local timezone to stay correct when the
-// server runs in a different timezone.
 func (wc *Webcam) UpdateNextCapture(
 	ctx context.Context,
 	baseTime time.Time,
@@ -195,7 +273,6 @@ func (wc *Webcam) UpdateNextCapture(
 	}
 	needsNewDay := wc.NextCapture >= len(wc.CaptureTimes)
 
-	// Compute tomorrow noon in the webcam's timezone (noon avoids DST edge cases).
 	var tomorrowRef time.Time
 	if needsNewDay && wc.WebcamLoc != nil {
 		last := wc.CaptureTimes[len(wc.CaptureTimes)-1]

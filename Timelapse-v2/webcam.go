@@ -60,6 +60,7 @@ type Webcam struct {
 	Additional int    `json:"additional"`                    // 0–16 extra captures between first and last
 	Folder     string `json:"folder"    validate:"required"` // short name relative to BaseDir, e.g. "kohm-yah-mah-nee"
 	WebcamTZ   string `json:"webcamTZ,omitempty"`            // IANA timezone name, cached after first lookup
+	Disabled   bool   `json:"disabled,omitempty"`            // true = skip at startup; operator-set
 
 	// --- runtime fields (not persisted) ---
 	mu           sync.RWMutex   `json:"-"`
@@ -71,7 +72,9 @@ type Webcam struct {
 	SunsetUTC    time.Time      `json:"-"`
 	CaptureTimes []time.Time    `json:"-"` // today's schedule, UTC
 	NextCapture  int            `json:"-"` // index of next future time in CaptureTimes
-	Backoff      time.Duration  `json:"-"` // exponential backoff delay; 0 = no backoff
+	Backoff      time.Duration  `json:"-"` // exponential backoff for tier-1 outages
+	FirstFailure time.Time      `json:"-"` // when current failure streak started; zero = no streak
+	LastAttempt  time.Time      `json:"-"` // when capture was last attempted
 }
 
 // newWebcam returns an initialized Webcam with an empty capture-times slice.
