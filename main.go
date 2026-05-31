@@ -147,6 +147,7 @@ func main() {
 	}
 	log.Printf("Starting service %s listening on port %s", sn, hs.Addr)
 	go startListening(&hs, "main") // call ListenAndServe from a separate go routine so main can listen for signals
+	go printStartupSummary()
 
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt)
@@ -175,6 +176,27 @@ func catch() {
 			log.Fatalf("=====> RECOVER in %s.catch, recover() returned: %v\n", sn, r)
 		}
 	}()
+}
+
+// printStartupSummary waits for capture goroutines to finish initializing
+// then prints /status and /next to stdout so the user gets confirmation
+// in the terminal even though log output has been redirected to a file.
+func printStartupSummary() {
+	time.Sleep(3 * time.Second) // allow last capture goroutine to finish initializing
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	base := "http://localhost:" + srv.config.port
+
+	for _, path := range []string{"/status", "/next"} {
+		resp, err := client.Get(base + path)
+		if err != nil {
+			fmt.Fprintf(os.Stdout, "startup %s: %v\n", path, err)
+			continue
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		fmt.Fprintf(os.Stdout, "%s\n", strings.TrimSpace(string(body)))
+	}
 }
 
 // ********** ********** ********** ********** ********** **********
