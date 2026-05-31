@@ -1076,8 +1076,8 @@ func (mtld masterTLDefs) Write() error {
 		}
 	}
 
-	if buf, err = json.Marshal(mtld); err != nil {
-		log.Printf("%s, json.Marshal: %v\n", sn, err)
+	if buf, err = json.MarshalIndent(mtld, "", "    "); err != nil {
+		log.Printf("%s, json.MarshalIndent: %v\n", sn, err)
 		return err
 	}
 
