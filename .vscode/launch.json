@@ -14,7 +14,8 @@
                 "TIMELAPSE_PATH": "C:\\Users\\peter\\OneDrive\\Coding\\Timelapse",
                 "TIMELAPSE_POLL": "60",
                 "TIMELAPSE_PORT": "8099",
-                "TIMELAPSE_TZDB": "YOUR_TIMELAPSE_TZDB_KEY_HERE"
+                "TIMELAPSE_TZDB": "YOUR_TIMELAPSE_TZDB_KEY_HERE",
+                "TIMELAPSE_LOGDIR": "C:\\Users\\peter\\OneDrive\\Pictures\\Timelapse\\logs"
             }
         },
         {
@@ -27,7 +28,8 @@
                 "TIMELAPSE_PATH": "C:\\Users\\peter\\OneDrive\\Coding\\Timelapse",
                 "TIMELAPSE_POLL": "60",
                 "TIMELAPSE_PORT": "8099",
-                "TIMELAPSE_TZDB": "YOUR_TIMELAPSE_TZDB_KEY_HERE"
+                "TIMELAPSE_TZDB": "YOUR_TIMELAPSE_TZDB_KEY_HERE",
+                "TIMELAPSE_LOGDIR": "C:\\Users\\peter\\OneDrive\\Pictures\\Timelapse\\logs"
             },
             "args": []
         }

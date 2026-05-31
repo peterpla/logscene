@@ -38,6 +38,49 @@ var (
 	imageHTTPClient = &http.Client{Timeout: 10 * time.Second}
 )
 
+var currentLogFile *os.File
+
+// openLogFile opens (or creates) a dated log file in the configured log
+// directory, redirects the standard logger to it, and closes the previous file.
+func openLogFile(date time.Time) error {
+	if err := os.MkdirAll(srv.config.logDir, 0755); err != nil {
+		return fmt.Errorf("openLogFile: MkdirAll %s: %w", srv.config.logDir, err)
+	}
+	filename := filepath.Join(srv.config.logDir, "timelapse-"+date.Format("2006-01-02")+".log")
+	f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("openLogFile: %w", err)
+	}
+	log.SetOutput(f)
+	if currentLogFile != nil {
+		currentLogFile.Close()
+	}
+	currentLogFile = f
+	log.Printf("openLogFile: logging to %s", filename)
+	return nil
+}
+
+// newDayMaintenance wakes at midnight each day to rotate the log file.
+// It is the intended hook for any future daily maintenance tasks.
+func newDayMaintenance(ctx context.Context) {
+	sn := "newDayMaintenance"
+	for {
+		now := time.Now().In(srv.localLoc)
+		nextMidnight := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 1, 0, srv.localLoc)
+		select {
+		case <-time.After(time.Until(nextMidnight)):
+		case <-ctx.Done():
+			log.Printf("%s exiting after ctx.Done\n", sn)
+			srv.wg.Done()
+			return
+		}
+
+		if err := openLogFile(time.Now().In(srv.localLoc)); err != nil {
+			log.Printf("%s, openLogFile: %v\n", sn, err)
+		}
+	}
+}
+
 const (
 	masterFile = "timelapse.json"
 	timeLayout = "2006-01-02T15:04:05Z" // ISO 8601; see https://sunrise-sunset.org/api, https://godoc.org/time#Time.Format and https://ednsquare.com/story/date-and-time-manipulation-golang-with-examples------cU1FjK
@@ -70,9 +113,16 @@ func main() {
 		panic(msg)
 	}
 
+	if err = openLogFile(time.Now().In(srv.localLoc)); err != nil {
+		log.Printf("%s, openLogFile: %v (continuing with stderr)\n", sn, err)
+	}
+
 	// use context and cancel with goroutines to handle Ctrl+C
 	// TODO: add ctx to server struct, so availble when adding a new webcam and launching new go routine
 	srv.ctx, srv.cancel = context.WithCancel(context.Background())
+
+	srv.wg.Add(1)
+	go newDayMaintenance(srv.ctx)
 
 	for _, tld := range *(srv.mtld) {
 		// log.Printf("%s, launching goroutine #%d (%s), FirstFlags %b, LastFlags %b",
@@ -537,6 +587,7 @@ type Config struct {
 	pollSecs int    // polling interval = delay to handle Ctrl-C
 	port     string // TCP port to listen on
 	tzdbAPI  string // API key for TimeZoneDB.com
+	logDir   string // directory for daily log files
 }
 
 // Load populates Config with flag and environment variable values
@@ -546,6 +597,7 @@ func (c *Config) Load() {
 	pflag.IntVar(&c.pollSecs, "poll", 60, "seconds between time checks")
 	pflag.StringVar(&c.port, "port", "8099", "HTTP port to listen on")
 	pflag.StringVar(&c.tzdbAPI, "tzdb", "", "API key for TimeZoneDB.com")
+	pflag.StringVar(&c.logDir, "logdir", "./logs", "directory for daily log files")
 	var help bool
 	pflag.BoolVarP(&help, "help", "h", false, "show usage information")
 	pflag.Parse()
@@ -559,6 +611,7 @@ func (c *Config) Load() {
 	viper.BindPFlag("poll", pflag.Lookup("poll"))
 	viper.BindPFlag("port", pflag.Lookup("port"))
 	viper.BindPFlag("tzdb", pflag.Lookup("tzdb"))
+	viper.BindPFlag("logdir", pflag.Lookup("logdir"))
 
 	viper.SetEnvPrefix("timelapse")
 	viper.AutomaticEnv()
@@ -566,11 +619,13 @@ func (c *Config) Load() {
 	viper.BindEnv("poll")
 	viper.BindEnv("port")
 	viper.BindEnv("tzdb")
+	viper.BindEnv("logdir")
 
 	c.path = viper.GetString("path")
 	c.pollSecs = viper.GetInt("poll")
 	c.port = viper.GetString("port")
 	c.tzdbAPI = viper.GetString("tzdb")
+	c.logDir = viper.GetString("logdir")
 
 	log.Printf("Config: %+v\n", c)
 }
@@ -628,9 +683,8 @@ func (tld *TLDef) SetCaptureTimes(ctx context.Context, date time.Time) error {
 	lenCT := len(tld.CaptureTimes)
 	if lenCT > 0 {
 		if time.Now().Before(tld.CaptureTimes[lenCT-1]) {
-			msg := fmt.Sprintf("%s %s not all CaptureTimes have passed, tld.CaptureTimes: %v", sn, tld.Name, tld.CaptureTimes)
 			srv.mu.Unlock()
-			panic(msg)
+			return fmt.Errorf("%s called before all CaptureTimes have passed", sn)
 		}
 		tld.CaptureTimes = []time.Time{} // all existing TLDef times have passed, start with an empty slice (preferred so json.Marshal() will emit "[]")
 	}
