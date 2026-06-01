@@ -155,13 +155,15 @@ func (s *server) handleNext() httprouter.Handle {
 			return
 		}
 		json.NewEncoder(w).Encode(struct {
-			Webcam      string `json:"webcam"`
-			NextCapture string `json:"next_capture"`
-			In          string `json:"in"`
+			Webcam           string `json:"webcam"`
+			NextCapture      string `json:"next_capture"`
+			NextCaptureLocal string `json:"next_capture_local"`
+			In               string `json:"in"`
 		}{
-			Webcam:      nextName,
-			NextCapture: nextTime.Format(time.RFC3339),
-			In:          time.Until(nextTime).Truncate(time.Second).String(),
+			Webcam:           nextName,
+			NextCapture:      nextTime.Format(time.RFC3339),
+			NextCaptureLocal: nextTime.In(time.Local).Format(time.RFC3339),
+			In:               time.Until(nextTime).Truncate(time.Second).String(),
 		})
 	}
 }

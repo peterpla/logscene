@@ -1,6 +1,6 @@
 BINARY   := timelapse-v2
 SRC      := .
-LOGDIR   := ./logs
+LOGDIR   := $(TIMELAPSE_LOGDIR)
 
 .PHONY: build run stop test test-local logs tidy clean
 
@@ -24,4 +24,3 @@ tidy:
 
 clean:
 	rm -f $(BINARY)
-	rm -rf $(LOGDIR)

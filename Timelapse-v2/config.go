@@ -1,10 +1,10 @@
 package main
 
 import (
+	"flag"
 	"log"
-
-	"github.com/spf13/pflag"
-	"github.com/spf13/viper"
+	"os"
+	"strconv"
 )
 
 // Config holds application-wide configuration.
@@ -18,53 +18,54 @@ type Config struct {
 	BaseDir  string // root storage location; webcam folder names are relative to this
 }
 
-// Load populates Config from flags, environment variables, and defaults.
-// Priority: flag > env var (TIMELAPSE_*) > default.
+// Load populates Config from the process flags and environment.
+// Priority: flag > env var > default.
+// Port checks PORT (Cloud Run standard) before TIMELAPSE_PORT.
 func (c *Config) Load() {
-	pflag.StringVar(&c.Path, "path", "./", "path to folder containing timelapse.json")
-	pflag.IntVar(&c.PollSecs, "poll", 60, "seconds between time checks")
-	pflag.StringVar(&c.Port, "port", "8099", "HTTP port to listen on")
-	pflag.StringVar(&c.TzdbAPI, "tzdb", "", "API key for timezonedb.com")
-	pflag.StringVar(&c.LogDir, "logdir", "./logs", "directory for daily log files")
-	pflag.StringVar(&c.Storage, "storage", "local", "storage backend: local, gcs, s3")
-	pflag.StringVar(&c.BaseDir, "base", "./captures", "root directory (or key prefix) for all captured images")
+	c.loadFrom(flag.CommandLine, os.Args[1:], os.Getenv)
+}
 
-	var help bool
-	pflag.BoolVarP(&help, "help", "h", false, "show usage information")
-	pflag.Parse()
+// loadFrom is the testable core of Load. It accepts an explicit FlagSet,
+// argument slice, and env-lookup function so tests can supply fakes.
+func (c *Config) loadFrom(fs *flag.FlagSet, args []string, getenv func(string) string) {
+	path    := fs.String("path",    "", "directory containing timelapse.json (env: TIMELAPSE_PATH, default: ./)")
+	poll    := fs.Int("poll",       0,  "seconds between time checks (env: TIMELAPSE_POLL, default: 60)")
+	port    := fs.String("port",    "", "HTTP port to listen on (env: PORT or TIMELAPSE_PORT, default: 8099)")
+	tzdb    := fs.String("tzdb",    "", "timezonedb.com API key (env: TIMELAPSE_TZDB)")
+	logdir  := fs.String("logdir",  "", "directory for daily log files (env: TIMELAPSE_LOGDIR, default: ./logs)")
+	storage := fs.String("storage", "", "storage backend: local, gcs, s3 (env: TIMELAPSE_STORAGE, default: local)")
+	base    := fs.String("base",    "", "root directory for captured images (env: TIMELAPSE_BASE, default: ./captures)")
+	fs.Parse(args) //nolint:errcheck
 
-	if help {
-		pflag.PrintDefaults()
-		// os.Exit called by caller to allow testing
-		return
+	c.Path    = coalesce(*path,    getenv("TIMELAPSE_PATH"),    "./")
+	c.Port    = coalesce(*port,    getenv("PORT"),              getenv("TIMELAPSE_PORT"), "8099")
+	c.TzdbAPI = coalesce(*tzdb,    getenv("TIMELAPSE_TZDB"))
+	c.LogDir  = coalesce(*logdir,  getenv("TIMELAPSE_LOGDIR"),  "./logs")
+	c.Storage = coalesce(*storage, getenv("TIMELAPSE_STORAGE"), "local")
+	c.BaseDir = coalesce(*base,    getenv("TIMELAPSE_BASE"),    "./captures")
+
+	if *poll != 0 {
+		c.PollSecs = *poll
+	} else if v := getenv("TIMELAPSE_POLL"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			log.Fatalf("Config: invalid TIMELAPSE_POLL %q: must be a positive integer", v)
+		}
+		c.PollSecs = n
+	} else {
+		c.PollSecs = 60
 	}
-
-	viper.BindPFlag("path", pflag.Lookup("path"))
-	viper.BindPFlag("poll", pflag.Lookup("poll"))
-	viper.BindPFlag("port", pflag.Lookup("port"))
-	viper.BindPFlag("tzdb", pflag.Lookup("tzdb"))
-	viper.BindPFlag("logdir", pflag.Lookup("logdir"))
-	viper.BindPFlag("storage", pflag.Lookup("storage"))
-	viper.BindPFlag("base", pflag.Lookup("base"))
-
-	viper.SetEnvPrefix("timelapse")
-	viper.AutomaticEnv()
-	viper.BindEnv("path")
-	viper.BindEnv("poll")
-	viper.BindEnv("port")
-	viper.BindEnv("tzdb")
-	viper.BindEnv("logdir")
-	viper.BindEnv("storage")
-	viper.BindEnv("base")
-
-	c.Path = viper.GetString("path")
-	c.PollSecs = viper.GetInt("poll")
-	c.Port = viper.GetString("port")
-	c.TzdbAPI = viper.GetString("tzdb")
-	c.LogDir = viper.GetString("logdir")
-	c.Storage = viper.GetString("storage")
-	c.BaseDir = viper.GetString("base")
 
 	log.Printf("Config: path=%s poll=%d port=%s logdir=%s storage=%s base=%s tzdb_configured=%t",
 		c.Path, c.PollSecs, c.Port, c.LogDir, c.Storage, c.BaseDir, c.TzdbAPI != "")
+}
+
+// coalesce returns the first non-empty string from vals.
+func coalesce(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
