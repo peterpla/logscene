@@ -14,7 +14,7 @@
     "lastSunset60": false,
     "lastTime": false,
     "lastTimeValue": "",
-    "additional": 5,
+    "additional": 47,
     "folder": "kohm-yah-mah-nee",
     "webcamTZ": "America/Los_Angeles"
   },
@@ -33,7 +33,7 @@
     "lastSunset60": false,
     "lastTime": false,
     "lastTimeValue": "",
-    "additional": 3,
+    "additional": 47,
     "folder": "haleamaumau",
     "webcamTZ": "Pacific/Honolulu"
   },
@@ -52,7 +52,7 @@
     "lastSunset60": false,
     "lastTime": false,
     "lastTimeValue": "",
-    "additional": 4,
+    "additional": 47,
     "folder": "lake-crescent",
     "webcamTZ": "America/Los_Angeles"
   },
@@ -71,7 +71,7 @@
     "lastSunset60": false,
     "lastTime": false,
     "lastTimeValue": "",
-    "additional": 5,
+    "additional": 47,
     "folder": "hurricane-ridge",
     "webcamTZ": "America/Los_Angeles"
   },
@@ -90,7 +90,7 @@
     "lastSunset60": true,
     "lastTime": false,
     "lastTimeValue": "",
-    "additional": 7,
+    "additional": 47,
     "folder": "apgar-mountain",
     "webcamTZ": "America/Denver"
   }

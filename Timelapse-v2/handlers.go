@@ -55,8 +55,11 @@ func (s *server) handleNew() httprouter.Handle {
 			http.Error(w, "invalid additional", http.StatusBadRequest)
 			return
 		}
-		if wc.Additional < 0 || wc.Additional > 16 {
-			http.Error(w, "additional must be 0–16", http.StatusBadRequest)
+		// 47 additional + 2 endpoints (first/last) = 49 shots across a ~12-hour day,
+		// one every ~15 minutes — the finest interval that makes practical sense for
+		// a landscape timelapse.
+		if wc.Additional < 0 || wc.Additional > 47 {
+			http.Error(w, "additional must be 0–47", http.StatusBadRequest)
 			return
 		}
 

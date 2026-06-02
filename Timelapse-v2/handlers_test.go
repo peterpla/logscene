@@ -361,7 +361,7 @@ func TestHandleNew_invalidAdditional(t *testing.T) {
 	form.Set("webcamUrl", "http://example.com/cam.jpg")
 	form.Set("latitude", "37.77")
 	form.Set("longitude", "-122.42")
-	form.Set("additional", "99")
+	form.Set("additional", "48") // valid int, but > 47 → range check fails
 	form.Set("folder", "test-cam")
 	form.Set("firstSunrise", "on")
 	form.Set("lastSunset", "on")
@@ -373,6 +373,30 @@ func TestHandleNew_invalidAdditional(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("invalid additional: want 400, got %d", w.Code)
+	}
+}
+
+func TestHandleNew_additionalAtMax(t *testing.T) {
+	srv := newTestServer(t)
+	srv.router.POST("/new", srv.handleNew())
+
+	form := url.Values{}
+	form.Set("name", "Test Cam")
+	form.Set("webcamUrl", "http://example.com/cam.jpg")
+	form.Set("latitude", "37.77")
+	form.Set("longitude", "-122.42")
+	form.Set("additional", "47") // maximum allowed value
+	form.Set("folder", "test-cam")
+	form.Set("firstSunrise", "on")
+	form.Set("lastSunset", "on")
+
+	req := httptest.NewRequest(http.MethodPost, "/new", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code == http.StatusBadRequest {
+		t.Errorf("additional=47 should be valid, got 400: %s", w.Body.String())
 	}
 }
 

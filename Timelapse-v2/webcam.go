@@ -57,7 +57,7 @@ type Webcam struct {
 	LastSunset60   bool    `json:"lastSunset60"`
 	LastTime       bool    `json:"lastTime"`
 	LastTimeValue  string  `json:"lastTimeValue"`  // "HH:MM" in webcam local time; required when LastTime true
-	Additional int    `json:"additional"`                    // 0–16 extra captures between first and last
+	Additional int    `json:"additional"`                    // 0–47 extra captures between first and last
 	Folder     string `json:"folder"    validate:"required"` // short name relative to BaseDir, e.g. "kohm-yah-mah-nee"
 	WebcamTZ   string `json:"webcamTZ,omitempty"`            // IANA timezone name, cached after first lookup
 	Disabled   bool   `json:"disabled,omitempty"`            // true = skip at startup; operator-set
