@@ -6,8 +6,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -119,6 +121,83 @@ func TestMemStorage_Keys(t *testing.T) {
 	keys := store.Keys()
 	if len(keys) != 3 {
 		t.Errorf("want 3 keys, got %d: %v", len(keys), keys)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// LocalStorage — direct tests (not gated by TEST_STORAGE env var)
+// ---------------------------------------------------------------------------
+
+// failReader always returns an error, used to exercise the io.Copy failure
+// path inside LocalStorage.Write.
+type failReader struct{}
+
+func (failReader) Read([]byte) (int, error) { return 0, errors.New("intentional read error") }
+
+func TestLocalStorage_WriteAndRead(t *testing.T) {
+	dir := t.TempDir()
+	store := NewLocalStorage()
+	ctx := context.Background()
+
+	key := filepath.Join(dir, "cam", "frame.jpg")
+	content := "fake-jpeg-bytes"
+
+	if err := store.Write(ctx, key, strings.NewReader(content)); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	rc, err := store.Read(ctx, key)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	defer rc.Close()
+	got, _ := io.ReadAll(rc)
+	if string(got) != content {
+		t.Errorf("Read: want %q, got %q", content, string(got))
+	}
+}
+
+func TestLocalStorage_ReadMissing(t *testing.T) {
+	store := NewLocalStorage()
+	_, err := store.Read(context.Background(), filepath.Join(t.TempDir(), "no-such-file.jpg"))
+	if err == nil {
+		t.Error("expected error reading missing file, got nil")
+	}
+}
+
+func TestLocalStorage_Write_mkdirError(t *testing.T) {
+	store := NewLocalStorage()
+	tmp := t.TempDir()
+
+	// Place a regular file where a directory is expected; MkdirAll must fail.
+	blocker := filepath.Join(tmp, "blocker")
+	if err := os.WriteFile(blocker, []byte("x"), 0644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	key := filepath.Join(blocker, "nested", "frame.jpg")
+	if err := store.Write(context.Background(), key, strings.NewReader("data")); err == nil {
+		t.Error("expected error when MkdirAll fails, got nil")
+	}
+}
+
+func TestLocalStorage_Write_copyError(t *testing.T) {
+	dir := t.TempDir()
+	store := NewLocalStorage()
+	key := filepath.Join(dir, "frame.jpg")
+
+	// Reader fails immediately; Write must propagate the error.
+	// (On Windows, os.Remove of an open file is a no-op, so we don't assert
+	// on file cleanup here — that behaviour is OS-specific.)
+	if err := store.Write(context.Background(), key, failReader{}); err == nil {
+		t.Error("expected error when reader fails, got nil")
+	}
+}
+
+func TestLocalStorage_List_missingDir(t *testing.T) {
+	store := NewLocalStorage()
+	prefix := filepath.Join(t.TempDir(), "nonexistent-dir", "prefix")
+	_, err := store.List(context.Background(), prefix)
+	if err == nil {
+		t.Error("expected error when directory does not exist, got nil")
 	}
 }
 

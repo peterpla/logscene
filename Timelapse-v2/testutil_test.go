@@ -93,6 +93,20 @@ func (m *mockImageFetcher) Fetch(_ context.Context, _ string) (io.ReadCloser, st
 }
 
 // ---------------------------------------------------------------------------
+// mockRenderer
+// ---------------------------------------------------------------------------
+
+type mockRenderer struct {
+	renderCalled bool
+	renderErr    error
+}
+
+func (m *mockRenderer) Render(_ context.Context, _, _ string) error {
+	m.renderCalled = true
+	return m.renderErr
+}
+
+// ---------------------------------------------------------------------------
 // helpers for building test Webcams
 // ---------------------------------------------------------------------------
 

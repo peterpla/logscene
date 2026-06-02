@@ -7,10 +7,26 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 )
+
+// failingNTimesSolarClient returns an error for the first n calls, then succeeds.
+type failingNTimesSolarClient struct {
+	n     int
+	calls int
+	times SolarTimes
+}
+
+func (f *failingNTimesSolarClient) GetSolarTimes(_ context.Context, _, _ float64, _ time.Time) (SolarTimes, error) {
+	f.calls++
+	if f.calls <= f.n {
+		return SolarTimes{}, fmt.Errorf("solar unavailable (call %d)", f.calls)
+	}
+	return f.times, nil
+}
 
 // ---------------------------------------------------------------------------
 // extensionForContentType
@@ -355,6 +371,60 @@ func TestUpdateNextCapture_advancesIndex(t *testing.T) {
 	wc.mu.RUnlock()
 	if got != 2 {
 		t.Errorf("NextCapture: want 2, got %d", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// nextRetryInterval (public wrapper around currentRetryInterval)
+// ---------------------------------------------------------------------------
+
+func TestNextRetryInterval_noStreak(t *testing.T) {
+	wc := newWebcam()
+	if d := wc.nextRetryInterval(); d != 0 {
+		t.Errorf("want 0 with no failure streak, got %v", d)
+	}
+}
+
+func TestNextRetryInterval_tier1(t *testing.T) {
+	wc := newWebcam()
+	wc.FirstFailure = time.Now()
+	wc.Backoff = 5 * time.Second
+	if d := wc.nextRetryInterval(); d != 5*time.Second {
+		t.Errorf("want 5s in tier 1, got %v", d)
+	}
+}
+
+func TestUpdateNextCapture_contextCancelledDuringRetry(t *testing.T) {
+	tzClient := &fixedTimezoneClient{tz: "America/Los_Angeles"}
+	// Solar client always fails, so every SetCaptureTimes attempt returns an error.
+	solar := &fixedSolarClient{err: errors.New("solar unavailable")}
+
+	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 0)
+	wc.CaptureTimes = []time.Time{
+		time.Now().Add(-2 * time.Hour),
+		time.Now().Add(-1 * time.Hour),
+	}
+	loc, _ := time.LoadLocation("America/Los_Angeles")
+	wc.mu.Lock()
+	wc.WebcamLoc = loc
+	wc.WebcamTZ = "America/Los_Angeles"
+	wc.mu.Unlock()
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Cancel the context a short time after the first SetCaptureTimes fails,
+	// before the 5-second retry timer fires.
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+
+	err := wc.UpdateNextCapture(ctx, time.Now(), tzClient, solar)
+	if err == nil {
+		t.Fatal("expected error after context cancellation, got nil")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("want context.Canceled, got: %v", err)
 	}
 }
 

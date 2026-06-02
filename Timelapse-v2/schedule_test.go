@@ -12,6 +12,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -301,6 +302,25 @@ func TestSetCaptureTimes_refetchesInvalidCachedTimezone(t *testing.T) {
 	}
 }
 
+// TestSetCaptureTimes_loadLocationError confirms that an unrecognised timezone
+// name returned by the API causes a LoadLocation error at schedule.go:66.
+// This can only happen if the API returns a non-IANA-standard string; the
+// embedded tzdata database means valid names always load successfully.
+func TestSetCaptureTimes_loadLocationError(t *testing.T) {
+	tzClient := &fixedTimezoneClient{tz: "Not/A/Real/Timezone"}
+	solar := &fixedSolarClient{times: laFixedSolar()}
+	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 0)
+	// WebcamTZ is empty, so GetTimezone is called and returns the bogus name.
+
+	err := wc.SetCaptureTimes(context.Background(), time.Now(), tzClient, solar)
+	if err == nil {
+		t.Error("expected error for unrecognised timezone name, got nil")
+	}
+	if !strings.Contains(err.Error(), "LoadLocation") {
+		t.Errorf("error should mention LoadLocation: %v", err)
+	}
+}
+
 func TestSetCaptureTimes_timezoneClientError(t *testing.T) {
 	tzClient := &fixedTimezoneClient{err: fmt.Errorf("tz lookup failed")}
 	solar := &fixedSolarClient{times: laFixedSolar()}
@@ -309,6 +329,110 @@ func TestSetCaptureTimes_timezoneClientError(t *testing.T) {
 	err := wc.SetCaptureTimes(context.Background(), time.Now(), tzClient, solar)
 	if err == nil {
 		t.Error("expected error from tz client, got nil")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// firstCaptureTime / lastCaptureTime — missing flag variants and error paths
+// ---------------------------------------------------------------------------
+
+func TestSetCaptureTimes_firstSunrise60(t *testing.T) {
+	tzClient := &fixedTimezoneClient{tz: "America/Los_Angeles"}
+	s := laFixedSolar()
+	solar := &fixedSolarClient{times: s}
+	wc := testWebcam(t, flagFirstSunrise60, flagLastSunset, 0)
+	ref := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+
+	if err := wc.SetCaptureTimes(context.Background(), ref, tzClient, solar); err != nil {
+		t.Fatalf("SetCaptureTimes: %v", err)
+	}
+	want := s.Sunrise.Add(60 * time.Minute)
+	wc.mu.RLock()
+	got := wc.CaptureTimes[0]
+	wc.mu.RUnlock()
+	if !got.Equal(want) {
+		t.Errorf("first capture: want %v, got %v", want, got)
+	}
+}
+
+func TestSetCaptureTimes_lastSunset30(t *testing.T) {
+	tzClient := &fixedTimezoneClient{tz: "America/Los_Angeles"}
+	s := laFixedSolar()
+	solar := &fixedSolarClient{times: s}
+	wc := testWebcam(t, flagFirstSunrise, flagLastSunset30, 0)
+	ref := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+
+	if err := wc.SetCaptureTimes(context.Background(), ref, tzClient, solar); err != nil {
+		t.Fatalf("SetCaptureTimes: %v", err)
+	}
+	want := s.Sunset.Add(-30 * time.Minute)
+	wc.mu.RLock()
+	last := wc.CaptureTimes[len(wc.CaptureTimes)-1]
+	wc.mu.RUnlock()
+	if !last.Equal(want) {
+		t.Errorf("last capture: want %v, got %v", want, last)
+	}
+}
+
+func TestSetCaptureTimes_lastTime(t *testing.T) {
+	tzClient := &fixedTimezoneClient{tz: "America/Los_Angeles"}
+	s := laFixedSolar()
+	solar := &fixedSolarClient{times: s}
+
+	wc := testWebcam(t, flagFirstSunrise, flagLastTime, 0)
+	wc.LastTimeValue = "17:00"
+	ref := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+
+	if err := wc.SetCaptureTimes(context.Background(), ref, tzClient, solar); err != nil {
+		t.Fatalf("SetCaptureTimes: %v", err)
+	}
+	// 17:00 PDT (UTC-7) = 00:00 UTC on 2026-06-02
+	want := time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
+	wc.mu.RLock()
+	last := wc.CaptureTimes[len(wc.CaptureTimes)-1]
+	wc.mu.RUnlock()
+	if !last.Equal(want) {
+		t.Errorf("last capture: want %v, got %v", want, last)
+	}
+}
+
+// TestSetCaptureTimes_noFirstFlagError confirms SetCaptureTimes propagates the
+// error from firstCaptureTime when FirstFlags is zero.
+func TestSetCaptureTimes_noFirstFlagError(t *testing.T) {
+	tzClient := &fixedTimezoneClient{tz: "America/Los_Angeles"}
+	solar := &fixedSolarClient{times: laFixedSolar()}
+
+	wc := newWebcam()
+	wc.Name = "test"
+	wc.Latitude = 34.0
+	wc.Longitude = -118.0
+	wc.WebcamTZ = "America/Los_Angeles"
+	wc.FirstFlags = 0 // no first flag — firstCaptureTime will error
+	wc.LastFlags = flagLastSunset
+	ref := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+
+	if err := wc.SetCaptureTimes(context.Background(), ref, tzClient, solar); err == nil {
+		t.Error("expected error for no first flag, got nil")
+	}
+}
+
+// TestSetCaptureTimes_noLastFlagError confirms SetCaptureTimes propagates the
+// error from lastCaptureTime when LastFlags is zero.
+func TestSetCaptureTimes_noLastFlagError(t *testing.T) {
+	tzClient := &fixedTimezoneClient{tz: "America/Los_Angeles"}
+	solar := &fixedSolarClient{times: laFixedSolar()}
+
+	wc := newWebcam()
+	wc.Name = "test"
+	wc.Latitude = 34.0
+	wc.Longitude = -118.0
+	wc.WebcamTZ = "America/Los_Angeles"
+	wc.FirstFlags = flagFirstSunrise
+	wc.LastFlags = 0 // no last flag — lastCaptureTime will error
+	ref := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+
+	if err := wc.SetCaptureTimes(context.Background(), ref, tzClient, solar); err == nil {
+		t.Error("expected error for no last flag, got nil")
 	}
 }
 

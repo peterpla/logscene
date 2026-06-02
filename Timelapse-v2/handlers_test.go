@@ -3,6 +3,7 @@ package main
 // handlers_test.go tests HTTP handlers using httptest.
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -19,21 +20,35 @@ import (
 )
 
 // newTestServer builds a minimal server with in-memory dependencies.
+// TempDirs are created before the cancel cleanup is registered so that, in
+// LIFO order, cancel()+wg.Wait() fires before the dirs are removed — ensuring
+// goroutines exit cleanly and don't hold file locks during cleanup.
 func newTestServer(t *testing.T) *server {
 	t.Helper()
 	store := NewMemStorage()
+	pathDir := t.TempDir()
+	logDir := t.TempDir()
+	baseDir := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
 	s := &server{
 		router:    httprouter.New(),
 		validate:  validator.New(),
-		config:    &Config{Path: t.TempDir(), LogDir: t.TempDir(), BaseDir: t.TempDir(), PollSecs: 60, Port: "9999"},
+		config:    &Config{Path: pathDir, LogDir: logDir, BaseDir: baseDir, PollSecs: 60, Port: "9999"},
 		webcams:   newWebcams(),
 		storage:   store,
 		renderer:  NewLocalRenderer(store),
 		tz:        &fixedTimezoneClient{tz: "America/Los_Angeles"},
 		solar:     &fixedSolarClient{times: laFixedSolar()},
 		fetcher:   &mockImageFetcher{data: []byte("img"), contentType: "image/jpeg"},
+		ctx:       ctx,
+		cancel:    cancel,
 		startTime: time.Now(),
 	}
+	// Registered last → runs first (LIFO): goroutines exit before temp dirs are removed.
+	t.Cleanup(func() {
+		cancel()
+		s.wg.Wait()
+	})
 	s.router.GET("/status", s.handleStatus())
 	s.router.GET("/next", s.handleNext())
 	return s
@@ -212,6 +227,108 @@ func TestHandleLogs_nParam(t *testing.T) {
 // POST /new — validation
 // ---------------------------------------------------------------------------
 
+// POST /new — field-parse error paths
+// ---------------------------------------------------------------------------
+
+func TestHandleNew_invalidLatitude(t *testing.T) {
+	srv := newTestServer(t)
+	srv.router.POST("/new", srv.handleNew())
+
+	form := url.Values{}
+	form.Set("name", "Test Cam")
+	form.Set("webcamUrl", "http://example.com/cam.jpg")
+	form.Set("latitude", "notanumber")
+	form.Set("longitude", "-122.42")
+	form.Set("additional", "0")
+	form.Set("folder", "test-cam")
+	form.Set("firstSunrise", "on")
+	form.Set("lastSunset", "on")
+
+	req := httptest.NewRequest(http.MethodPost, "/new", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("invalid latitude: want 400, got %d", w.Code)
+	}
+}
+
+func TestHandleNew_invalidLongitude(t *testing.T) {
+	srv := newTestServer(t)
+	srv.router.POST("/new", srv.handleNew())
+
+	form := url.Values{}
+	form.Set("name", "Test Cam")
+	form.Set("webcamUrl", "http://example.com/cam.jpg")
+	form.Set("latitude", "37.77")
+	form.Set("longitude", "notanumber")
+	form.Set("additional", "0")
+	form.Set("folder", "test-cam")
+	form.Set("firstSunrise", "on")
+	form.Set("lastSunset", "on")
+
+	req := httptest.NewRequest(http.MethodPost, "/new", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("invalid longitude: want 400, got %d", w.Code)
+	}
+}
+
+func TestHandleNew_additionalNonNumeric(t *testing.T) {
+	srv := newTestServer(t)
+	srv.router.POST("/new", srv.handleNew())
+
+	form := url.Values{}
+	form.Set("name", "Test Cam")
+	form.Set("webcamUrl", "http://example.com/cam.jpg")
+	form.Set("latitude", "37.77")
+	form.Set("longitude", "-122.42")
+	form.Set("additional", "abc") // not an integer → strconv.Atoi error
+	form.Set("folder", "test-cam")
+	form.Set("firstSunrise", "on")
+	form.Set("lastSunset", "on")
+
+	req := httptest.NewRequest(http.MethodPost, "/new", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("non-numeric additional: want 400, got %d", w.Code)
+	}
+}
+
+func TestHandleNew_additionalOutOfRange(t *testing.T) {
+	srv := newTestServer(t)
+	srv.router.POST("/new", srv.handleNew())
+
+	form := url.Values{}
+	form.Set("name", "Test Cam")
+	form.Set("webcamUrl", "http://example.com/cam.jpg")
+	form.Set("latitude", "37.77")
+	form.Set("longitude", "-122.42")
+	form.Set("additional", "-1") // valid int, but < 0 → range check fails
+	form.Set("folder", "test-cam")
+	form.Set("firstSunrise", "on")
+	form.Set("lastSunset", "on")
+
+	req := httptest.NewRequest(http.MethodPost, "/new", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("additional out of range: want 400, got %d", w.Code)
+	}
+}
+
+// POST /new — validation (existing tests below)
+// ---------------------------------------------------------------------------
+
 func TestHandleNew_missingName(t *testing.T) {
 	srv := newTestServer(t)
 	srv.router.POST("/new", srv.handleNew())
@@ -258,6 +375,129 @@ func TestHandleNew_invalidAdditional(t *testing.T) {
 		t.Errorf("invalid additional: want 400, got %d", w.Code)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// GET /
+// ---------------------------------------------------------------------------
+
+func TestHandleHome(t *testing.T) {
+	srv := newTestServer(t)
+	if err := srv.initTemplates(); err != nil {
+		t.Fatalf("initTemplates: %v", err)
+	}
+	srv.router.GET("/", srv.handleHome())
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("want 200, got %d\nbody: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "Timelapse") {
+		t.Errorf("body should contain 'Timelapse': %s", w.Body.String())
+	}
+}
+
+// POST /new — success path
+// ---------------------------------------------------------------------------
+
+func TestHandleNew_success(t *testing.T) {
+	srv := newTestServer(t)
+	srv.router.POST("/new", srv.handleNew())
+
+	form := url.Values{}
+	form.Set("name", "Test Cam")
+	form.Set("webcamUrl", "http://example.com/cam.jpg")
+	form.Set("latitude", "37.77")
+	form.Set("longitude", "-122.42")
+	form.Set("additional", "0")
+	form.Set("folder", "test-cam")
+	form.Set("firstSunrise", "on")
+	form.Set("lastSunset", "on")
+
+	req := httptest.NewRequest(http.MethodPost, "/new", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusSeeOther {
+		t.Errorf("want 303, got %d\nbody: %s", w.Code, w.Body.String())
+	}
+	srv.mu.RLock()
+	n := len(*srv.webcams)
+	srv.mu.RUnlock()
+	if n != 1 {
+		t.Errorf("want 1 webcam appended, got %d", n)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// POST /render
+// ---------------------------------------------------------------------------
+
+func TestHandleRender_success(t *testing.T) {
+	srv := newTestServer(t)
+	mr := &mockRenderer{}
+	srv.renderer = mr
+	srv.router.POST("/render", srv.handleRender())
+
+	body := `{"folder":"kohm-yah-mah-nee","output":"output.mp4"}`
+	req := httptest.NewRequest(http.MethodPost, "/render", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("want 200, got %d", w.Code)
+	}
+	var resp struct {
+		Status string `json:"status"`
+		Output string `json:"output"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Status != "rendering" {
+		t.Errorf("status: want %q, got %q", "rendering", resp.Status)
+	}
+	if resp.Output != "output.mp4" {
+		t.Errorf("output: want %q, got %q", "output.mp4", resp.Output)
+	}
+}
+
+func TestHandleRender_badJSON(t *testing.T) {
+	srv := newTestServer(t)
+	srv.router.POST("/render", srv.handleRender())
+
+	req := httptest.NewRequest(http.MethodPost, "/render", strings.NewReader("not json"))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("want 400, got %d", w.Code)
+	}
+}
+
+func TestHandleRender_missingFields(t *testing.T) {
+	srv := newTestServer(t)
+	srv.router.POST("/render", srv.handleRender())
+
+	body := `{"folder":"kohm-yah-mah-nee"}` // output field missing
+	req := httptest.NewRequest(http.MethodPost, "/render", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("want 400, got %d", w.Code)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// POST /new — validation (continued)
+// ---------------------------------------------------------------------------
 
 func TestHandleNew_multipleFirstFlags(t *testing.T) {
 	srv := newTestServer(t)
