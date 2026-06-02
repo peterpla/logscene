@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -70,11 +71,16 @@ func main() {
 		time.Sleep(2 * time.Second)
 	}
 
-	if err := srv.initTemplates("./templates"); err != nil {
+	if err := srv.initTemplates(); err != nil {
 		log.Fatalf("main: initTemplates: %v", err)
 	}
 
-	srv.router.ServeFiles("/static/*filepath", http.Dir("static"))
+	staticSub, err := fs.Sub(staticFS, "static")
+	if err != nil {
+		log.Fatalf("main: fs.Sub staticFS: %v", err)
+	}
+	srv.router.Handler("GET", "/static/*filepath",
+		http.StripPrefix("/static/", http.FileServer(http.FS(staticSub))))
 	srv.router.GET("/", srv.handleHome())
 	srv.router.POST("/new", srv.handleNew())
 	srv.router.GET("/status", srv.handleStatus())

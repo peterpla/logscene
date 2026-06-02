@@ -230,22 +230,9 @@ func (s *server) handleRender() httprouter.Handle {
 	}
 }
 
-// initTemplates parses all .html files in dir into s.tmpl.
-func (s *server) initTemplates(dir string) error {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return fmt.Errorf("initTemplates: ReadDir %s: %w", dir, err)
-	}
-	var paths []string
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".html") {
-			paths = append(paths, filepath.Join(dir, e.Name()))
-		}
-	}
-	if len(paths) == 0 {
-		return fmt.Errorf("initTemplates: no .html files found in %s", dir)
-	}
-	tmpl, err := template.ParseFiles(paths...)
+// initTemplates parses the embedded HTML templates into s.tmpl.
+func (s *server) initTemplates() error {
+	tmpl, err := template.ParseFS(templateFS, "templates/*.html")
 	if err != nil {
 		return fmt.Errorf("initTemplates: %w", err)
 	}
