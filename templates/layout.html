@@ -1,128 +1,109 @@
 {{define "layout"}}
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
-  <meta name="description" content="">
-  <meta name="author" content="">
-
   <title>{{ .Company }}</title>
-
-  <!-- Bootstrap core CSS -->
   <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.0/css/bootstrap.min.css" rel="stylesheet">
-
-  <!-- Custom fonts for this template -->
-  <link href="https://stackpath.bootstrapcdn.com/font-awesome/4.7.0/css/font-awesome.min.css" rel="stylesheet">
-  <link href="https://cdnjs.cloudflare.com/ajax/libs/simple-line-icons/2.4.1/css/simple-line-icons.css" rel="stylesheet"
-    type="text/css">
-  <link href="https://fonts.googleapis.com/css?family=Lato:300,400,700,300italic,400italic,700italic" rel="stylesheet"
-    type="text/css">
-
-  <!-- Custom styles for this template -->
+  <link href="https://fonts.googleapis.com/css?family=Lato:300,400,700" rel="stylesheet" type="text/css">
   <link href="/static/css/landing-page.min.css" rel="stylesheet">
 </head>
-
 <body>
   {{template "header" . }}
 
-  <!-- Form to enter timelapse definition -->
-  <div class="container mx-auto">
+  <div class="container mx-auto mt-4">
     <form action="/new" method="POST">
       <div class="form-group">
         <label for="name">Name</label>
-        <textarea id="name" name="name" class="form-control" rows="1" aria-describedby="nameHelp"></textarea>
-        <small id="nameHelp" class="form-text text-muted">Friendly name of this Timelapse definition.</small>
+        <input id="name" name="name" type="text" class="form-control" aria-describedby="nameHelp">
+        <small id="nameHelp" class="form-text text-muted">Friendly name of this timelapse definition.</small>
       </div>
       <div class="form-group">
         <label for="webcamUrl">Webcam URL</label>
-        <textarea id="webcamUrl" name="webcamUrl" class="form-control" rows="1" aria-describedby="urlHelp"></textarea>
+        <input id="webcamUrl" name="webcamUrl" type="text" class="form-control" aria-describedby="urlHelp">
         <small id="urlHelp" class="form-text text-muted">URL of the webcam image.</small>
       </div>
+      <div class="form-row">
+        <div class="form-group col-md-6">
+          <label for="latitude">Latitude</label>
+          <input id="latitude" name="latitude" type="text" class="form-control" aria-describedby="latHelp">
+          <small id="latHelp" class="form-text text-muted">Latitude of the webcam, e.g., 40.7128.</small>
+        </div>
+        <div class="form-group col-md-6">
+          <label for="longitude">Longitude</label>
+          <input id="longitude" name="longitude" type="text" class="form-control" aria-describedby="longHelp">
+          <small id="longHelp" class="form-text text-muted">Longitude of the webcam, e.g., -74.0060.</small>
+        </div>
+      </div>
+
+      <fieldset class="form-group border p-3 mb-3">
+        <legend class="w-auto px-2 small">First capture of the day (choose one)</legend>
+        <div class="form-check form-check-inline">
+          <input id="firstSunrise" name="firstSunrise" type="checkbox" class="form-check-input">
+          <label class="form-check-label" for="firstSunrise">Sunrise</label>
+        </div>
+        <div class="form-check form-check-inline">
+          <input id="firstSunrise30" name="firstSunrise30" type="checkbox" class="form-check-input">
+          <label class="form-check-label" for="firstSunrise30">Sunrise +30 min</label>
+        </div>
+        <div class="form-check form-check-inline">
+          <input id="firstSunrise60" name="firstSunrise60" type="checkbox" class="form-check-input">
+          <label class="form-check-label" for="firstSunrise60">Sunrise +60 min</label>
+        </div>
+        <div class="form-check form-check-inline">
+          <input id="firstTime" name="firstTime" type="checkbox" class="form-check-input">
+          <label class="form-check-label" for="firstTime">Fixed time:</label>
+          <input id="firstTimeValue" name="firstTimeValue" type="time" class="form-control form-control-sm ml-2" style="width:auto">
+        </div>
+      </fieldset>
+
+      <fieldset class="form-group border p-3 mb-3">
+        <legend class="w-auto px-2 small">Last capture of the day (choose one)</legend>
+        <div class="form-check form-check-inline">
+          <input id="lastSunset" name="lastSunset" type="checkbox" class="form-check-input">
+          <label class="form-check-label" for="lastSunset">Sunset</label>
+        </div>
+        <div class="form-check form-check-inline">
+          <input id="lastSunset30" name="lastSunset30" type="checkbox" class="form-check-input">
+          <label class="form-check-label" for="lastSunset30">Sunset -30 min</label>
+        </div>
+        <div class="form-check form-check-inline">
+          <input id="lastSunset60" name="lastSunset60" type="checkbox" class="form-check-input">
+          <label class="form-check-label" for="lastSunset60">Sunset -60 min</label>
+        </div>
+        <div class="form-check form-check-inline">
+          <input id="lastTime" name="lastTime" type="checkbox" class="form-check-input">
+          <label class="form-check-label" for="lastTime">Fixed time:</label>
+          <input id="lastTimeValue" name="lastTimeValue" type="time" class="form-control form-control-sm ml-2" style="width:auto">
+        </div>
+      </fieldset>
+
       <div class="form-group">
-        <label for="latitude">Latitude</label>
-        <textarea id="latitude" name="latitude" class="form-control" rows="1" aria-describedby="latHelp"></textarea>
-        <small id="latHelp" class="form-text text-muted">Latitude of the webcam, e.g., xxx.xxxx.</small>
+        <label for="additional">Additional captures per day: <span id="additionalValue">0</span></label>
+        <input id="additional" name="additional" type="range" class="custom-range" min="0" max="16" value="0" aria-describedby="additionalHelp">
+        <small id="additionalHelp" class="form-text text-muted">Captures distributed evenly between first and last, 0–16.</small>
       </div>
       <div class="form-group">
-        <label for="longitude">Latitude</label>
-        <textarea id="longitude" name="longitude" class="form-control" rows="1" aria-describedby="longHelp"></textarea>
-        <small id="longHelp" class="form-text text-muted">Longitude of the webcam, e.g., xxx.xxxx.</small>
+        <label for="folder">Storage folder / prefix</label>
+        <input id="folder" name="folder" type="text" class="form-control" aria-describedby="folderHelp">
+        <small id="folderHelp" class="form-text text-muted">Local directory path (or cloud object prefix) for captured images.</small>
       </div>
-      <div class="form-group form-check-inline">
-        <input id="firstSunrise" name="firstSunrise" type="checkbox" class="form-check-input" value="">
-        <!-- aria-describedby="firstSunriseHelp" -->
-        <label for="firstSunrise">First capture at Sunrise exactly</label>
-        <!-- <small id="firstSunriseHelp" class="form-text text-muted">First capture at one hour after sunrise.</small> -->
-      </div>
-      <div class="form-group form-check-inline">
-        <input id="firstSunrise30" name="firstSunrise30" type="checkbox" class="form-check-input" value="">
-        <label for="firstSunrise30">Sunrise +30 minutes</label>
-      </div>
-      <div class="form-group form-check-inline">
-        <input id="firstSunrise60" name="firstSunrise60" type="checkbox" class="form-check-input" value="">
-        <label for="firstSunrise60">Sunrise +60 minutes</label>
-      </div>
-      <p></p>
-      <div class="form-group form-check-inline">
-        <input id="lastSunset" name="lastSunset" type="checkbox" class="form-check-input" value="">
-        <!-- aria-describedby="lastSunsetHelp"> -->
-        <label for="lastSunset">Last capture at Sunset exactly</label>
-        <!-- <small id="lastSunsetHelp" class="form-text text-muted">Last capture at one hour before sunset.</small> -->
-      </div>
-      <div class="form-group form-check-inline">
-        <input id="lastSunset30" name="lastSunset30" type="checkbox" class="form-check-input" value="">
-        <label for="lastSunset30">Sunset -30 minutes</label>
-      </div>
-      <div class="form-group form-check-inline">
-        <input id="lastSunset60" name="lastSunset60" type="checkbox" class="form-check-input" value="">
-        <label for="lastSunset60">Sunset -60 minutes</label>
-      </div>
-      <div class="form-group form-check">
-        <input disabled id="firstTime" name="firstTime" type="checkbox" class="form-check-input" value=""
-          aria-describedby="firstTimeHelp">
-        <label for="firstTime">First capture time</label>
-        <small id="firstTimeHelp" class="form-text text-muted">First capture at the specified time.</small>
-      </div>
-      <div class="form-group form-check">
-        <input disabled id="lastTime" name="lastTime" type="checkbox" class="form-check-input" value=""
-          aria-describedby="lastTimeHelp">
-        <label for="lastTime">Last capture time</label>
-        <small id="lastTimeHelp" class="form-text text-muted">Last capture at the specified time.</small>
-      </div>
-      <div class="form-group">
-        <label for="additional">Additional captures:</label> <label id="additionalValue"></label>
-        <input id="additional" name="additional" type="range" class="custom-range" min="0" max="16"
-          aria-describedby="additionalHelp">
-        <small id="additionalHelp" class="form-text text-muted">Additional captures each day, 0-16.</small>
-      </div>
-      <div class="form-group">
-        <label for="folder">Folder path</label>
-        <textarea id="folder" name="folder" class="form-control" rows="1" aria-describedby="folderHelp"></textarea>
-        <small id="folderHelp" class="form-text text-muted">Path to the folder to store captured images.</small>
-      </div>
-      <button type="submit" class="btn btn-primary">Submit</button>
+      <button type="submit" class="btn btn-primary">Add webcam</button>
     </form>
   </div>
+
   <script>
     var slider = document.getElementById("additional");
     var output = document.getElementById("additionalValue");
-    output.innerHTML = slider.value; // Display the default slider value
-
-    // Update the current slider value (each time you drag the slider handle)
-    slider.oninput = function () {
-      output.innerHTML = this.value;
-    }
+    output.textContent = slider.value;
+    slider.oninput = function() { output.textContent = this.value; };
   </script>
 
   {{template "footer" . }}
 
-  <!-- Bootstrap core JavaScript -->
-  <!-- <script src="vendor/jquery/jquery.min.js"></script> -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
   <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.0/js/bootstrap.bundle.min.js"></script>
 </body>
-
 </html>
 {{end}}

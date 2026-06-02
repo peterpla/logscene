@@ -1,4 +1,6 @@
 # syntax = docker/dockerfile:1-experimental
+# NOTE: Last edited 2020-07-17 (v1 era, Google Cloud Run / GCS deployment).
+# Not actively maintained since then — buyer beware.
 
 FROM golang:1.14.5-alpine AS build
 RUN mkdir /src
