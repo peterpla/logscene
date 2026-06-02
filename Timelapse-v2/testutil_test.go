@@ -101,7 +101,7 @@ type mockRenderer struct {
 	renderErr    error
 }
 
-func (m *mockRenderer) Render(_ context.Context, _, _ string) error {
+func (m *mockRenderer) Render(_ context.Context, _, _ string, _ RenderOptions) error {
 	m.renderCalled = true
 	return m.renderErr
 }

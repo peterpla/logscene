@@ -36,7 +36,7 @@ func newTestServer(t *testing.T) *server {
 		config:    &Config{Path: pathDir, LogDir: logDir, BaseDir: baseDir, PollSecs: 60, Port: "9999"},
 		webcams:   newWebcams(),
 		storage:   store,
-		renderer:  NewLocalRenderer(store),
+		renderer:  NewLocalRenderer(),
 		tz:        &fixedTimezoneClient{tz: "America/Los_Angeles"},
 		solar:     &fixedSolarClient{times: laFixedSolar()},
 		fetcher:   &mockImageFetcher{data: []byte("img"), contentType: "image/jpeg"},

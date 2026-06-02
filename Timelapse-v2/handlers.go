@@ -202,8 +202,11 @@ func (s *server) handleLogs() httprouter.Handle {
 
 // renderRequest is the JSON body for POST /render.
 type renderRequest struct {
-	Folder string `json:"folder"`
-	Output string `json:"output"`
+	Folder string `json:"folder"` // webcam folder name, e.g. "kohm-yah-mah-nee"
+	Output string `json:"output"` // output video file path
+	Start  string `json:"start"`  // optional: YYYY-MM-DD inclusive lower bound
+	End    string `json:"end"`    // optional: YYYY-MM-DD inclusive upper bound
+	FPS    int    `json:"fps"`    // optional: frames per second (0 = default 24)
 }
 
 // handleRender triggers an ffmpeg render for a stored folder of images.
@@ -219,8 +222,16 @@ func (s *server) handleRender() httprouter.Handle {
 			return
 		}
 
+		dir := filepath.Join(s.config.BaseDir, req.Folder)
+		opts := RenderOptions{
+			FPS:       req.FPS,
+			StartDate: strings.ReplaceAll(req.Start, "-", ""),
+			EndDate:   strings.ReplaceAll(req.End, "-", ""),
+		}
+
+		ctx := s.ctx
 		go func() {
-			if err := s.renderer.Render(r.Context(), req.Folder, req.Output); err != nil {
+			if err := s.renderer.Render(ctx, dir, req.Output, opts); err != nil {
 				log.Printf("handleRender: %v", err)
 			}
 		}()

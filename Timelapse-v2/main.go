@@ -131,7 +131,7 @@ func newServer() *server {
 		config:    cfg,
 		webcams:   newWebcams(),
 		storage:   store,
-		renderer:  NewLocalRenderer(store),
+		renderer:  NewLocalRenderer(),
 		tz:        NewHTTPTimezoneClient(cfg.TzdbAPI),
 		solar:     NewHTTPSolarClient(),
 		fetcher:   NewHTTPImageFetcher(),
