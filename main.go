@@ -26,21 +26,24 @@ import (
 
 // server holds all shared state and injected dependencies.
 type server struct {
-	router    *httprouter.Router
-	validate  *validator.Validate
-	config    *Config
-	tmpl      *template.Template
-	webcams   *Webcams       // all configured webcams; protected by mu
-	storage   Storage
-	renderer  Renderer
-	tz        TimezoneClient
-	solar     SolarClient
-	fetcher   ImageFetcher
-	ctx       context.Context
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
-	mu        sync.RWMutex // protects webcams slice
-	startTime time.Time
+	router       *httprouter.Router
+	validate     *validator.Validate
+	config       *Config
+	tmpl         *template.Template
+	webcams      *Webcams       // all configured webcams; protected by mu
+	storage      Storage
+	renderer     Renderer
+	tz           TimezoneClient
+	solar        SolarClient
+	fetcher      ImageFetcher
+	ctx          context.Context
+	cancel       context.CancelFunc
+	webcamCtx    context.Context    // child of ctx; cancelled to stop capture goroutines
+	webcamCancel context.CancelFunc // protected by mu when read in handleNew
+	wg           sync.WaitGroup     // maintenance goroutines (newDayMaintenance)
+	webcamWg     sync.WaitGroup     // capture goroutines only
+	mu           sync.RWMutex       // protects webcams, webcamCtx, webcamCancel
+	startTime    time.Time
 }
 
 var currentLogFile *os.File
@@ -57,8 +60,6 @@ func main() {
 		log.Printf("main: openLogFile: %v (continuing with stderr)", err)
 	}
 
-	srv.ctx, srv.cancel = context.WithCancel(context.Background())
-
 	// Start daily log-rotation goroutine.
 	srv.wg.Add(1)
 	go newDayMaintenance(srv.ctx, srv)
@@ -66,8 +67,8 @@ func main() {
 	// Launch one capture goroutine per webcam.
 	// Sleep 2 s between launches to respect timezonedb.com's 1 req/s rate limit.
 	for _, wc := range *srv.webcams {
-		srv.wg.Add(1)
-		go capture(srv.ctx, wc, time.Duration(srv.config.PollSecs)*time.Second, srv)
+		srv.webcamWg.Add(1)
+		go capture(srv.webcamCtx, wc, time.Duration(srv.config.PollSecs)*time.Second, srv)
 		time.Sleep(2 * time.Second)
 	}
 
@@ -88,6 +89,7 @@ func main() {
 	srv.router.GET("/next", srv.handleNext())
 	srv.router.GET("/logs", srv.handleLogs())
 	srv.router.POST("/render", srv.handleRender())
+	srv.router.POST("/reload", srv.handleReload())
 
 	hs := &http.Server{
 		Addr:         ":" + srv.config.Port,
@@ -107,6 +109,7 @@ func main() {
 
 	signal.Stop(c)
 	srv.cancel()
+	srv.webcamWg.Wait()
 	srv.wg.Wait()
 
 	if currentLogFile != nil {
@@ -126,17 +129,23 @@ func newServer() *server {
 
 	store := buildStorage(cfg.Storage)
 
+	ctx, cancel := context.WithCancel(context.Background())
+	webcamCtx, webcamCancel := context.WithCancel(ctx)
 	s := &server{
-		router:    httprouter.New(),
-		validate:  validator.New(),
-		config:    cfg,
-		webcams:   newWebcams(),
-		storage:   store,
-		renderer:  NewLocalRenderer(),
-		tz:        NewHTTPTimezoneClient(cfg.TzdbAPI),
-		solar:     NewHTTPSolarClient(),
-		fetcher:   NewHTTPImageFetcher(),
-		startTime: time.Now(),
+		router:       httprouter.New(),
+		validate:     validator.New(),
+		config:       cfg,
+		webcams:      newWebcams(),
+		storage:      store,
+		renderer:     NewLocalRenderer(),
+		tz:           NewHTTPTimezoneClient(cfg.TzdbAPI),
+		solar:        NewHTTPSolarClient(),
+		fetcher:      NewHTTPImageFetcher(),
+		ctx:          ctx,
+		cancel:       cancel,
+		webcamCtx:    webcamCtx,
+		webcamCancel: webcamCancel,
+		startTime:    time.Now(),
 	}
 	return s
 }

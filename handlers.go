@@ -3,6 +3,7 @@ package main
 // handlers.go contains all HTTP request handlers.
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -97,6 +98,8 @@ func (s *server) handleNew() httprouter.Handle {
 
 		s.mu.Lock()
 		s.webcams.Append(wc)
+		wcCtx := s.webcamCtx
+		s.webcamWg.Add(1)
 		s.mu.Unlock()
 
 		if err := s.webcams.Write(s.config.Path, s.validate); err != nil {
@@ -105,8 +108,7 @@ func (s *server) handleNew() httprouter.Handle {
 			return
 		}
 
-		s.wg.Add(1)
-		go capture(s.ctx, wc, time.Duration(s.config.PollSecs)*time.Second, s)
+		go capture(wcCtx, wc, time.Duration(s.config.PollSecs)*time.Second, s)
 
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 	}
@@ -242,6 +244,52 @@ func (s *server) handleRender() httprouter.Handle {
 			Status string `json:"status"`
 			Output string `json:"output"`
 		}{"rendering", req.Output})
+	}
+}
+
+// handleReload stops all capture goroutines, re-reads timelapse.json, and
+// restarts them. It validates the new config before stopping anything, so a
+// bad config file leaves the running goroutines untouched.
+// The response is returned after the new goroutines are launched; the 2 s
+// stagger between launches means the handler blocks for ~2*(n-1) seconds.
+func (s *server) handleReload() httprouter.Handle {
+	return func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+		// Validate new config before disrupting anything.
+		fresh := newWebcams()
+		path := filepath.Join(s.config.Path, masterFile)
+		if err := fresh.Read(path, s.validate); err != nil {
+			log.Printf("handleReload: read: %v", err)
+			http.Error(w, "reload failed: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		// Stop all capture goroutines and wait for them to exit.
+		s.webcamCancel()
+		s.webcamWg.Wait()
+
+		// Swap in new config and create a fresh child context.
+		s.mu.Lock()
+		s.webcams = fresh
+		s.webcamCtx, s.webcamCancel = context.WithCancel(s.ctx)
+		newCtx := s.webcamCtx
+		s.mu.Unlock()
+
+		// Relaunch with 2 s stagger to respect timezonedb.com rate limit.
+		for i, wc := range *fresh {
+			if i > 0 {
+				time.Sleep(2 * time.Second)
+			}
+			s.webcamWg.Add(1)
+			go capture(newCtx, wc, time.Duration(s.config.PollSecs)*time.Second, s)
+		}
+
+		n := len(*fresh)
+		log.Printf("handleReload: complete, %d webcams running", n)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(struct {
+			Status  string `json:"status"`
+			Webcams int    `json:"webcams"`
+		}{"reloaded", n})
 	}
 }
 

@@ -37,7 +37,7 @@ const (
 // capture is the long-running goroutine for one webcam.
 func capture(ctx context.Context, wc *Webcam, pollInterval time.Duration, srv *server) {
 	name := "capture." + wc.Name
-	defer srv.wg.Done()
+	defer srv.webcamWg.Done()
 
 	if wc.Disabled {
 		log.Printf("%s: webcam is disabled — skipping", name)

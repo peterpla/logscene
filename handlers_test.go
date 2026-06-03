@@ -30,23 +30,27 @@ func newTestServer(t *testing.T) *server {
 	logDir := t.TempDir()
 	baseDir := t.TempDir()
 	ctx, cancel := context.WithCancel(context.Background())
+	webcamCtx, webcamCancel := context.WithCancel(ctx)
 	s := &server{
-		router:    httprouter.New(),
-		validate:  validator.New(),
-		config:    &Config{Path: pathDir, LogDir: logDir, BaseDir: baseDir, PollSecs: 60, Port: "9999"},
-		webcams:   newWebcams(),
-		storage:   store,
-		renderer:  NewLocalRenderer(),
-		tz:        &fixedTimezoneClient{tz: "America/Los_Angeles"},
-		solar:     &fixedSolarClient{times: laFixedSolar()},
-		fetcher:   &mockImageFetcher{data: []byte("img"), contentType: "image/jpeg"},
-		ctx:       ctx,
-		cancel:    cancel,
-		startTime: time.Now(),
+		router:       httprouter.New(),
+		validate:     validator.New(),
+		config:       &Config{Path: pathDir, LogDir: logDir, BaseDir: baseDir, PollSecs: 60, Port: "9999"},
+		webcams:      newWebcams(),
+		storage:      store,
+		renderer:     NewLocalRenderer(),
+		tz:           &fixedTimezoneClient{tz: "America/Los_Angeles"},
+		solar:        &fixedSolarClient{times: laFixedSolar()},
+		fetcher:      &mockImageFetcher{data: []byte("img"), contentType: "image/jpeg"},
+		ctx:          ctx,
+		cancel:       cancel,
+		webcamCtx:    webcamCtx,
+		webcamCancel: webcamCancel,
+		startTime:    time.Now(),
 	}
 	// Registered last → runs first (LIFO): goroutines exit before temp dirs are removed.
 	t.Cleanup(func() {
 		cancel()
+		s.webcamWg.Wait()
 		s.wg.Wait()
 	})
 	s.router.GET("/status", s.handleStatus())
