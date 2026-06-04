@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Peter Plamondon. All Rights Reserved.
+
 package main
 
 // capture.go contains the per-webcam goroutine, image retrieval, and the

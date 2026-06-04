@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Peter Plamondon. All Rights Reserved.
+
 package main
 
 // webcam_test.go tests SetFirstLastFlags, NextCaptureTime, Webcams.Read, and Webcams.Write.

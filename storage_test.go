@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Peter Plamondon. All Rights Reserved.
+
 package main
 
 // storage_test.go tests the Storage interface implementations.

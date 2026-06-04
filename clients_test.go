@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Peter Plamondon. All Rights Reserved.
+
 package main
 
 // clients_test.go tests the three HTTP client implementations using

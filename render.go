@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Peter Plamondon. All Rights Reserved.
+
 package main
 
 // render.go defines the Renderer interface and LocalRenderer, which invokes

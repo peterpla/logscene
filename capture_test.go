@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Peter Plamondon. All Rights Reserved.
+
 package main
 
 // capture_test.go tests CaptureImage, the graduated outage-backoff methods

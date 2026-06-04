@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Peter Plamondon. All Rights Reserved.
+
 package main
 
 // clients.go defines the three interfaces that abstract all outbound HTTP calls,

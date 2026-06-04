@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Peter Plamondon. All Rights Reserved.
+
 package main
 
 // schedule.go computes the daily ordered list of capture times for a Webcam.

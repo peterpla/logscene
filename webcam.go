@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Peter Plamondon. All Rights Reserved.
+
 package main
 
 // webcam.go defines Webcam (one webcam's capture configuration) and Webcams
