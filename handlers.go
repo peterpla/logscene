@@ -12,6 +12,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -46,6 +47,8 @@ func (s *server) handleNew() httprouter.Handle {
 		wc.Name = strings.TrimSpace(r.FormValue("name"))
 		wc.URL = strings.TrimSpace(r.FormValue("webcamUrl"))
 		wc.Folder = strings.TrimSpace(r.FormValue("folder"))
+		wc.SourceType = strings.TrimSpace(r.FormValue("sourceType"))
+		wc.DeviceName = strings.TrimSpace(r.FormValue("deviceName"))
 		wc.FirstTimeValue = r.FormValue("firstTimeValue")
 		wc.LastTimeValue = r.FormValue("lastTimeValue")
 
@@ -320,6 +323,66 @@ func (s *server) handleInfo() httprouter.Handle {
 			GoVersion: runtime.Version(),
 		})
 	}
+}
+
+// handleDevices returns a JSON array of DirectShow video device names.
+func (s *server) handleDevices() httprouter.Handle {
+	return func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+		devices := listDirectShowVideoDevices()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(devices)
+	}
+}
+
+// listDirectShowVideoDevices runs ffmpeg to enumerate DirectShow video devices
+// and returns their display names. Returns an empty slice if ffmpeg is
+// unavailable or no devices are found.
+func listDirectShowVideoDevices() []string {
+	cmd := exec.Command("ffmpeg", "-list_devices", "true", "-f", "dshow", "-i", "dummy")
+	out, _ := cmd.CombinedOutput() // ffmpeg exits non-zero for -i dummy; ignore
+	return parseDirectShowVideoDevices(out)
+}
+
+// parseDirectShowVideoDevices extracts video device names from ffmpeg dshow output.
+// Handles two formats:
+//   - New (ffmpeg 5+): [in#0 @ ...] "Name" (video)
+//   - Old (ffmpeg 4.x): section between "DirectShow video devices" and "DirectShow audio devices" headers
+func parseDirectShowVideoDevices(out []byte) []string {
+	var devices []string
+	inVideoSection := false
+
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.Contains(line, "Alternative name") {
+			continue
+		}
+		// Old format: track section boundaries.
+		if strings.Contains(line, "DirectShow video devices") {
+			inVideoSection = true
+			continue
+		}
+		if strings.Contains(line, "DirectShow audio devices") {
+			inVideoSection = false
+		}
+
+		// New format: lines annotated with (video); old format: lines in the video section.
+		if !inVideoSection && !strings.Contains(line, `" (video)`) {
+			continue
+		}
+
+		if i := strings.Index(line, `"`); i >= 0 {
+			rest := line[i+1:]
+			if j := strings.Index(rest, `"`); j >= 0 {
+				if name := rest[:j]; name != "" {
+					devices = append(devices, name)
+				}
+			}
+		}
+	}
+
+	if devices == nil {
+		devices = []string{}
+	}
+	return devices
 }
 
 // initTemplates parses the embedded HTML templates into s.tmpl.

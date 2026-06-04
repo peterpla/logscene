@@ -85,6 +85,7 @@ func main() {
 	srv.router.Handler("GET", "/static/*filepath",
 		http.StripPrefix("/static/", http.FileServer(http.FS(staticSub))))
 	srv.router.GET("/", srv.handleHome())
+	srv.router.GET("/devices", srv.handleDevices())
 	srv.router.POST("/new", srv.handleNew())
 	srv.router.GET("/info", srv.handleInfo())
 	srv.router.GET("/status", srv.handleStatus())
@@ -135,7 +136,7 @@ func newServer() *server {
 	webcamCtx, webcamCancel := context.WithCancel(ctx)
 	s := &server{
 		router:       httprouter.New(),
-		validate:     validator.New(),
+		validate:     newValidator(),
 		config:       cfg,
 		webcams:      newWebcams(),
 		storage:      store,

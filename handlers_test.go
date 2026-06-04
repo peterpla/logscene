@@ -17,7 +17,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-playground/validator/v10"
 	"github.com/julienschmidt/httprouter"
 )
 
@@ -35,7 +34,7 @@ func newTestServer(t *testing.T) *server {
 	webcamCtx, webcamCancel := context.WithCancel(ctx)
 	s := &server{
 		router:       httprouter.New(),
-		validate:     validator.New(),
+		validate:     newValidator(),
 		config:       &Config{Path: pathDir, LogDir: logDir, BaseDir: baseDir, PollSecs: 60, Port: "9999"},
 		webcams:      newWebcams(),
 		storage:      store,
@@ -444,6 +443,69 @@ func TestHandleHome(t *testing.T) {
 	}
 }
 
+// parseDirectShowVideoDevices
+// ---------------------------------------------------------------------------
+
+func TestParseDirectShowVideoDevices(t *testing.T) {
+	newFmt := `ffmpeg version 8.1.1
+[in#0 @ 0xc0ffee] "Microsoft Modern Webcam" (video)
+[in#0 @ 0xc0ffee]   Alternative name "@device_pnp_\\?\usb#..."
+[in#0 @ 0xc0ffee] Could not enumerate audio only devices (or none found).
+Error opening input file dummy.`
+
+	oldFmt := `[dshow @ 0xc0ffee] DirectShow video devices (some may be both video and audio devices)
+[dshow @ 0xc0ffee] "Logitech C920"
+[dshow @ 0xc0ffee]   Alternative name "@device_pnp_\\?\usb#..."
+[dshow @ 0xc0ffee] "OBS Virtual Camera"
+[dshow @ 0xc0ffee] DirectShow audio devices
+[dshow @ 0xc0ffee] "Microphone (Realtek Audio)"`
+
+	tests := []struct {
+		name string
+		in   string
+		want []string
+	}{
+		{"new format single device", newFmt, []string{"Microsoft Modern Webcam"}},
+		{"old format multiple devices", oldFmt, []string{"Logitech C920", "OBS Virtual Camera"}},
+		{"empty output", "", []string{}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parseDirectShowVideoDevices([]byte(tc.in))
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+			for i := range tc.want {
+				if got[i] != tc.want[i] {
+					t.Errorf("device[%d]: got %q, want %q", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+// GET /devices
+// ---------------------------------------------------------------------------
+
+func TestHandleDevices(t *testing.T) {
+	srv := newTestServer(t)
+	srv.router.GET("/devices", srv.handleDevices())
+
+	req := httptest.NewRequest(http.MethodGet, "/devices", nil)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", w.Code)
+	}
+	// Must be valid JSON and an array (possibly empty when ffmpeg absent).
+	var devices []string
+	if err := json.NewDecoder(w.Body).Decode(&devices); err != nil {
+		t.Fatalf("response is not a JSON string array: %v", err)
+	}
+}
+
 // POST /new — success path
 // ---------------------------------------------------------------------------
 
@@ -474,6 +536,31 @@ func TestHandleNew_success(t *testing.T) {
 	srv.mu.RUnlock()
 	if n != 1 {
 		t.Errorf("want 1 webcam appended, got %d", n)
+	}
+}
+
+func TestHandleNew_usbMissingDeviceName(t *testing.T) {
+	srv := newTestServer(t)
+	srv.router.POST("/new", srv.handleNew())
+
+	form := url.Values{}
+	form.Set("name", "USB Cam")
+	form.Set("sourceType", "usb")
+	// deviceName intentionally omitted
+	form.Set("latitude", "37.77")
+	form.Set("longitude", "-122.42")
+	form.Set("additional", "0")
+	form.Set("folder", "usb-cam")
+	form.Set("firstSunrise", "on")
+	form.Set("lastSunset", "on")
+
+	req := httptest.NewRequest(http.MethodPost, "/new", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("want 400 when USB source has no deviceName, got %d", w.Code)
 	}
 }
 

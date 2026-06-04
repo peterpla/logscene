@@ -19,10 +19,13 @@ package main
 // On success at any tier, all failure tracking resets immediately.
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"log"
+	"os"
+	"os/exec"
 	"sort"
 	"time"
 )
@@ -226,20 +229,74 @@ func (wc *Webcam) NextCaptureTime() time.Time {
 }
 
 // CaptureImage fetches one image from the webcam and writes it to storage.
+// Dispatch is based on SourceType; an empty SourceType is treated as "url"
+// for backward compatibility with existing logscene.json entries.
 func (wc *Webcam) CaptureImage(ctx context.Context, fetcher ImageFetcher, store Storage, baseDir string) (string, int64, error) {
-	body, contentType, err := fetcher.Fetch(ctx, wc.URL)
+	key := wc.targetKey(baseDir)
+	st := wc.SourceType
+	if st == "" {
+		st = "url"
+	}
+
+	switch st {
+	case "usb":
+		key += ".jpg"
+		size, err := captureViaFfmpeg(ctx,
+			[]string{"-f", "dshow", "-i", "video=" + wc.DeviceName, "-frames:v", "1"},
+			store, key)
+		return key, size, err
+
+	case "stream":
+		key += ".jpg"
+		size, err := captureViaFfmpeg(ctx,
+			[]string{"-i", wc.URL, "-frames:v", "1"},
+			store, key)
+		return key, size, err
+
+	default: // "url"
+		body, contentType, err := fetcher.Fetch(ctx, wc.URL)
+		if err != nil {
+			return "", 0, fmt.Errorf("CaptureImage: fetch: %w", err)
+		}
+		defer body.Close()
+		key += extensionForContentType(contentType)
+		counter := &countingReader{r: body}
+		if err := store.Write(ctx, key, counter); err != nil {
+			return "", 0, fmt.Errorf("CaptureImage: store: %w", err)
+		}
+		return key, counter.n, nil
+	}
+}
+
+// captureViaFfmpeg runs ffmpeg with the given args, captures a single frame
+// to a temp file, then streams that file into storage.
+func captureViaFfmpeg(ctx context.Context, args []string, store Storage, key string) (int64, error) {
+	tmp, err := os.CreateTemp("", "logscene-capture-*.jpg")
 	if err != nil {
-		return "", 0, fmt.Errorf("CaptureImage: fetch: %w", err)
+		return 0, fmt.Errorf("captureViaFfmpeg: create temp file: %w", err)
 	}
-	defer body.Close()
+	tmpPath := tmp.Name()
+	tmp.Close()
+	defer os.Remove(tmpPath)
 
-	key := wc.targetKey(baseDir) + extensionForContentType(contentType)
+	cmdArgs := append([]string{"-y"}, args...)
+	cmdArgs = append(cmdArgs, "-update", "1", tmpPath)
+	cmd := exec.CommandContext(ctx, "ffmpeg", cmdArgs...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return 0, fmt.Errorf("captureViaFfmpeg: ffmpeg: %w: %s", err, bytes.TrimSpace(out))
+	}
 
-	counter := &countingReader{r: body}
+	f, err := os.Open(tmpPath)
+	if err != nil {
+		return 0, fmt.Errorf("captureViaFfmpeg: open output: %w", err)
+	}
+	defer f.Close()
+
+	counter := &countingReader{r: f}
 	if err := store.Write(ctx, key, counter); err != nil {
-		return "", 0, fmt.Errorf("CaptureImage: store: %w", err)
+		return 0, fmt.Errorf("captureViaFfmpeg: store: %w", err)
 	}
-	return key, counter.n, nil
+	return counter.n, nil
 }
 
 // targetKey builds the storage key: baseDir/folder/Name YYYYMMDDhhmmss

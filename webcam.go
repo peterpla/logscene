@@ -46,7 +46,7 @@ const (
 type Webcam struct {
 	// --- persisted fields ---
 	Name           string  `json:"name"           validate:"required"`
-	URL            string  `json:"webcamUrl"      validate:"required,url"`
+	URL            string  `json:"webcamUrl"      validate:"omitempty,url"`
 	Latitude       float64 `json:"latitude"       validate:"required,latitude"`
 	Longitude      float64 `json:"longitude"      validate:"required,longitude"`
 	FirstSunrise   bool    `json:"firstSunrise"`
@@ -61,6 +61,8 @@ type Webcam struct {
 	LastTimeValue  string  `json:"lastTimeValue"`  // "HH:MM" in webcam local time; required when LastTime true
 	Additional int    `json:"additional"`                    // 0–47 extra captures between first and last
 	Folder     string `json:"folder"    validate:"required"` // short name relative to BaseDir, e.g. "kohm-yah-mah-nee"
+	SourceType string `json:"sourceType,omitempty"`          // "url" (default) | "usb" | "stream"
+	DeviceName string `json:"deviceName,omitempty"`          // DirectShow device name; required when SourceType == "usb"
 	WebcamTZ   string `json:"webcamTZ,omitempty"`            // IANA timezone name, cached after first lookup
 	Disabled   bool   `json:"disabled,omitempty"`            // true = skip at startup; operator-set
 
@@ -206,4 +208,40 @@ func (ws *Webcams) Delete(prefix string) *Webcams {
 		}
 	}
 	return &keep
+}
+
+// ---------------------------------------------------------------------------
+// Validator
+// ---------------------------------------------------------------------------
+
+// newValidator returns a configured validator that includes struct-level
+// source-type validation for Webcam.
+func newValidator() *validator.Validate {
+	v := validator.New()
+	v.RegisterStructValidation(validateWebcamSource, Webcam{})
+	return v
+}
+
+// validateWebcamSource enforces source-type-specific field requirements:
+//   - SourceType "" or "url": URL required
+//   - SourceType "stream":    URL required
+//   - SourceType "usb":       DeviceName required
+func validateWebcamSource(sl validator.StructLevel) {
+	wc := sl.Current().Interface().(Webcam)
+	st := wc.SourceType
+	if st == "" {
+		st = "url"
+	}
+	switch st {
+	case "url", "stream":
+		if wc.URL == "" {
+			sl.ReportError(wc.URL, "URL", "webcamUrl", "required_for_source_type", "")
+		}
+	case "usb":
+		if wc.DeviceName == "" {
+			sl.ReportError(wc.DeviceName, "DeviceName", "deviceName", "required_for_usb", "")
+		}
+	default:
+		sl.ReportError(wc.SourceType, "SourceType", "sourceType", "oneof", "url usb stream")
+	}
 }
