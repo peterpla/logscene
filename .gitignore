@@ -1,6 +1,12 @@
 # Binaries
 timelapse
 timelapse.exe
+logscene
+logscene.exe
+
+# Runtime data files
+timelapse.json
+logscene.json
 
 # Test binary, built with `go test -c`
 *.test
