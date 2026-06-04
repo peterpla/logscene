@@ -489,3 +489,151 @@ func TestUpdateNextCapture_rollsOverToTomorrow(t *testing.T) {
 		t.Errorf("CaptureTimes after rollover: want ≥2, got %d", len(ct))
 	}
 }
+
+// ---------------------------------------------------------------------------
+// UpdateNextCapture — unsorted CaptureTimes triggers sort branch
+// ---------------------------------------------------------------------------
+
+func TestUpdateNextCapture_sortsUnsortedCaptureTimes(t *testing.T) {
+	tzClient := &fixedTimezoneClient{tz: "America/Los_Angeles"}
+	solar := &fixedSolarClient{times: laFixedSolar()}
+
+	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 0)
+	now := time.Now()
+	// Deliberately reverse order — the sort branch must execute.
+	wc.CaptureTimes = []time.Time{
+		now.Add(2 * time.Hour),
+		now.Add(1 * time.Hour),
+		now.Add(-1 * time.Hour),
+	}
+	wc.NextCapture = 0
+
+	if err := wc.UpdateNextCapture(context.Background(), now, tzClient, solar); err != nil {
+		t.Fatalf("UpdateNextCapture: %v", err)
+	}
+	wc.mu.RLock()
+	ct := wc.CaptureTimes
+	wc.mu.RUnlock()
+	// Ascending order after sort: each element before the next.
+	for i := 1; i < len(ct); i++ {
+		if !ct[i-1].Before(ct[i]) {
+			t.Errorf("CaptureTimes not sorted at index %d", i)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// shouldAttemptNow — NextCapture out-of-bounds
+// ---------------------------------------------------------------------------
+
+func TestShouldAttemptNow_nextCaptureOutOfBounds(t *testing.T) {
+	wc := newWebcam()
+	wc.CaptureTimes = []time.Time{time.Now().Add(-time.Minute)}
+	wc.NextCapture = 99 // past end of slice
+	if wc.shouldAttemptNow() {
+		t.Error("expected false when NextCapture is out of bounds")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// captureViaFfmpeg — ffmpeg exits non-zero
+// ---------------------------------------------------------------------------
+
+func TestCaptureViaFfmpeg_ffmpegFailure(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not found in PATH")
+	}
+	store := NewMemStorage()
+	// Deliberately invalid format flag — ffmpeg exits non-zero immediately.
+	args := []string{"-f", "nonexistent_format_xyz", "-i", "dummy"}
+	_, err := captureViaFfmpeg(context.Background(), args, store, "test/out.jpg")
+	if err == nil {
+		t.Error("expected error when ffmpeg fails, got nil")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// CaptureImage — store.Write error in url branch
+// ---------------------------------------------------------------------------
+
+func TestCaptureImage_storeWriteError(t *testing.T) {
+	store := &failWriteStorage{MemStorage: NewMemStorage()}
+	baseDir := t.TempDir()
+	fetcher := &mockImageFetcher{data: []byte("img"), contentType: "image/jpeg"}
+
+	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 0)
+	wc.CaptureTimes = []time.Time{time.Now()}
+	wc.NextCapture = 0
+
+	_, _, err := wc.CaptureImage(context.Background(), fetcher, store, baseDir)
+	if err == nil {
+		t.Error("expected error when storage write fails, got nil")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// UpdateNextCapture — retry warning log (transient solar failure)
+// ---------------------------------------------------------------------------
+
+func TestUpdateNextCapture_retriesOnTransientSolarFailure(t *testing.T) {
+	tzClient := &fixedTimezoneClient{tz: "America/Los_Angeles"}
+	// Fails once, then succeeds — exercises the retry log path.
+	solar := &failingNTimesSolarClient{n: 1, times: laFixedSolar()}
+
+	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 0)
+	wc.CaptureTimes = []time.Time{
+		time.Now().Add(-2 * time.Hour),
+		time.Now().Add(-1 * time.Hour),
+	}
+	loc, _ := time.LoadLocation("America/Los_Angeles")
+	wc.mu.Lock()
+	wc.WebcamLoc = loc
+	wc.WebcamTZ = "America/Los_Angeles"
+	wc.mu.Unlock()
+
+	if err := wc.UpdateNextCapture(context.Background(), time.Now(), tzClient, solar); err != nil {
+		t.Fatalf("UpdateNextCapture: %v", err)
+	}
+	if solar.calls < 2 {
+		t.Errorf("expected ≥2 solar calls (1 fail + 1 success), got %d", solar.calls)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// CaptureImage — stream dispatch
+// ---------------------------------------------------------------------------
+
+func TestCaptureImage_stream(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not found in PATH")
+	}
+
+	// Create a minimal JPEG using lavfi for ffmpeg to read as a stream input.
+	tmpJPEG := t.TempDir() + "/src.jpg"
+	setup := exec.Command("ffmpeg",
+		"-f", "lavfi", "-i", "testsrc=duration=1:size=10x10",
+		"-frames:v", "1", "-y", tmpJPEG)
+	if out, err := setup.CombinedOutput(); err != nil {
+		t.Skipf("lavfi setup failed: %v: %s", err, out)
+	}
+
+	store := NewMemStorage()
+	baseDir := t.TempDir()
+
+	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 0)
+	wc.SourceType = "stream"
+	wc.URL = tmpJPEG
+	wc.CaptureTimes = []time.Time{time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)}
+	wc.NextCapture = 0
+
+	key, size, err := wc.CaptureImage(context.Background(), nil, store, baseDir)
+	if err != nil {
+		t.Fatalf("CaptureImage stream: %v", err)
+	}
+	if size == 0 {
+		t.Error("expected non-zero capture size")
+	}
+	if !strings.HasSuffix(key, ".jpg") {
+		t.Errorf("key %q should end in .jpg", key)
+	}
+}

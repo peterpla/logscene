@@ -11,6 +11,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"testing"
@@ -137,6 +138,16 @@ func testWebcam(t *testing.T, firstFlag, lastFlag uint, additional int) *Webcam 
 	wc.LastTime = lastFlag&flagLastTime != 0
 
 	return wc
+}
+
+// ---------------------------------------------------------------------------
+// failWriteStorage — always errors on Write
+// ---------------------------------------------------------------------------
+
+type failWriteStorage struct{ *MemStorage }
+
+func (f *failWriteStorage) Write(_ context.Context, _ string, _ io.Reader) error {
+	return errors.New("intentional write error")
 }
 
 // laFixedSolar returns solar times for a summer day at roughly LA latitude.

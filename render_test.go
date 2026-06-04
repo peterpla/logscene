@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -60,6 +61,67 @@ func TestLocalRenderer_Render_dateFilter(t *testing.T) {
 	})
 	if err != nil && strings.Contains(err.Error(), "no frames") {
 		t.Errorf("date filter excluded frames that should have matched: %v", err)
+	}
+}
+
+// TestLocalRenderer_Render_readDirError exercises the ReadDir failure path.
+func TestLocalRenderer_Render_readDirError(t *testing.T) {
+	r := NewLocalRenderer()
+	err := r.Render(context.Background(),
+		filepath.Join(t.TempDir(), "nonexistent-subdir"),
+		"out.mp4", RenderOptions{})
+	if err == nil {
+		t.Error("expected error for nonexistent directory, got nil")
+	}
+	if strings.Contains(err.Error(), "no frames") {
+		t.Errorf("error should be a readdir failure, not 'no frames': %v", err)
+	}
+}
+
+// TestLocalRenderer_Render_skipsNonImages verifies that subdirectories and
+// non-image files are skipped and do not count as frames.
+func TestLocalRenderer_Render_skipsNonImages(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+
+	// Write a text file and create a subdirectory — both must be skipped.
+	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("text"), 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "subdir"), 0755); err != nil {
+		t.Fatalf("Mkdir: %v", err)
+	}
+
+	r := NewLocalRenderer()
+	err := r.Render(ctx, dir, filepath.Join(dir, "out.mp4"), RenderOptions{})
+	if err == nil || !strings.Contains(err.Error(), "no frames") {
+		t.Errorf("expected 'no frames' when only non-images present, got: %v", err)
+	}
+}
+
+// TestLocalRenderer_Render_dateFilterEndDate verifies that frames dated after
+// EndDate are excluded, and that files with stems shorter than 14 chars are
+// skipped rather than causing a panic.
+func TestLocalRenderer_Render_dateFilterEndDate(t *testing.T) {
+	dir := t.TempDir()
+	store := NewLocalStorage()
+	ctx := context.Background()
+
+	for _, name := range []string{
+		"Test Cam 20260601120000.jpg", // inside range
+		"Test Cam 20260801120000.jpg", // after EndDate — must be excluded
+		"short.jpg",                   // stem < 14 chars — must be skipped
+	} {
+		if err := store.Write(ctx, filepath.Join(dir, name), strings.NewReader("x")); err != nil {
+			t.Fatalf("Write %s: %v", name, err)
+		}
+	}
+
+	r := NewLocalRenderer()
+	err := r.Render(ctx, dir, filepath.Join(dir, "out.mp4"), RenderOptions{EndDate: "20260630"})
+	// One frame matches; Render proceeds past the "no frames" guard.
+	if err != nil && strings.Contains(err.Error(), "no frames") {
+		t.Errorf("expected at least one frame in range, got 'no frames': %v", err)
 	}
 }
 

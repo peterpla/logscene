@@ -211,6 +211,20 @@ func TestHTTPSolarClient_non200(t *testing.T) {
 	}
 }
 
+func TestHTTPSolarClient_invalidJSON(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, "not-json-at-all")
+	}))
+	defer ts.Close()
+
+	c := &HTTPSolarClient{client: &http.Client{Transport: redirectTo(ts.URL)}}
+	_, err := c.GetSolarTimes(context.Background(), 34.0, -118.0, time.Now())
+	if err == nil {
+		t.Error("expected error for malformed JSON body, got nil")
+	}
+}
+
 func TestHTTPSolarClient_apiError(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

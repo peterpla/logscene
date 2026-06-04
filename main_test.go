@@ -101,3 +101,26 @@ func TestOpenLogFile_dirIsFile(t *testing.T) {
 		t.Error("expected error when intermediate path component is a file, got nil")
 	}
 }
+
+func TestOpenLogFile_openFileError(t *testing.T) {
+	dir := t.TempDir()
+	date := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+
+	// Create a directory at the path where the log file would be written.
+	// os.OpenFile on a directory for writing must fail.
+	logFilePath := filepath.Join(dir, "logscene-2026-06-01.log")
+	if err := os.Mkdir(logFilePath, 0755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	origWriter := log.Writer()
+	origLogFile := currentLogFile
+	t.Cleanup(func() {
+		log.SetOutput(origWriter)
+		currentLogFile = origLogFile
+	})
+
+	if err := openLogFile(dir, date); err == nil {
+		t.Error("expected error when log file path is a directory, got nil")
+	}
+}

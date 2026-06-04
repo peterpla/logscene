@@ -271,3 +271,37 @@ func TestWebcams_Read_validationError(t *testing.T) {
 		t.Error("expected validation error, got nil")
 	}
 }
+
+func TestWebcams_Read_setFirstLastFlagsError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, masterFile)
+
+	// validWebcam has FirstSunrise=true; adding FirstSunrise30=true gives
+	// two first-capture flags → SetFirstLastFlags returns an error.
+	wc := validWebcam()
+	wc.FirstSunrise30 = true
+	data, _ := json.Marshal(Webcams{wc})
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	ws := newWebcams()
+	if err := ws.Read(path, newValidator()); err == nil {
+		t.Error("expected error for webcam with conflicting first-capture flags, got nil")
+	}
+}
+
+func TestWebcams_Write_writeFileError(t *testing.T) {
+	tmp := t.TempDir()
+	// Pass a regular file as the directory so os.WriteFile(dir/logscene.json) fails.
+	notADir := filepath.Join(tmp, "notadir")
+	if err := os.WriteFile(notADir, []byte("x"), 0644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	ws := newWebcams()
+	ws.Append(validWebcam())
+	if err := ws.Write(notADir, newValidator()); err == nil {
+		t.Error("expected error when dir is a regular file, got nil")
+	}
+}
