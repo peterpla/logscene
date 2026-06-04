@@ -9,13 +9,13 @@
             "type": "go",
             "request": "launch",
             "mode": "test",
-            "program": "C:\\Users\\peter\\OneDrive\\Coding\\Timelapse", // ${fileDirname} doesn't work here
+            "program": "C:\\Users\\peter\\OneDrive\\Coding\\LogScene", // ${fileDirname} doesn't work here
             "env": {
-                "LOGSCENE_PATH": "C:\\Users\\peter\\OneDrive\\Coding\\Timelapse",
+                "LOGSCENE_PATH": "C:\\Users\\peter\\OneDrive\\Coding\\LogScene",
                 "LOGSCENE_POLL": "60",
                 "LOGSCENE_PORT": "8099",
                 "LOGSCENE_TZDB": "YOUR_LOGSCENE_TZDB_KEY_HERE",
-                "LOGSCENE_LOGDIR": "C:\\Users\\peter\\OneDrive\\Pictures\\Timelapse\\logs"
+                "LOGSCENE_LOGDIR": "C:\\Users\\peter\\OneDrive\\Pictures\\LogScene\\logs"
             }
         },
         {
@@ -23,13 +23,13 @@
             "type": "go",
             "request": "launch",
             "mode": "auto",
-            "program": "C:\\Users\\peter\\OneDrive\\Coding\\Timelapse", // ${fileDirname} doesn't work here
+            "program": "C:\\Users\\peter\\OneDrive\\Coding\\LogScene", // ${fileDirname} doesn't work here
             "env": {
-                "LOGSCENE_PATH": "C:\\Users\\peter\\OneDrive\\Coding\\Timelapse",
+                "LOGSCENE_PATH": "C:\\Users\\peter\\OneDrive\\Coding\\LogScene",
                 "LOGSCENE_POLL": "60",
                 "LOGSCENE_PORT": "8099",
                 "LOGSCENE_TZDB": "YOUR_LOGSCENE_TZDB_KEY_HERE",
-                "LOGSCENE_LOGDIR": "C:\\Users\\peter\\OneDrive\\Pictures\\Timelapse\\logs"
+                "LOGSCENE_LOGDIR": "C:\\Users\\peter\\OneDrive\\Pictures\\LogScene\\logs"
             },
             "args": []
         }
