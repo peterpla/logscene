@@ -422,8 +422,23 @@ func TestHandleHome(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("want 200, got %d\nbody: %s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), "Timelapse") {
-		t.Errorf("body should contain 'Timelapse': %s", w.Body.String())
+	body := w.Body.String()
+
+	// Card content
+	for _, want := range []string{"Front Yard", "Active", "Render"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q", want)
+		}
+	}
+
+	// Dashboard nav link is active; others are not.
+	if !strings.Contains(body, `class="nav-link active">Dashboard`) {
+		t.Errorf("Dashboard nav link should be active")
+	}
+	for _, link := range []string{"Add Webcam", "Logs"} {
+		if strings.Contains(body, `class="nav-link active">`+link) {
+			t.Errorf("%s nav link should not be active", link)
+		}
 	}
 }
 

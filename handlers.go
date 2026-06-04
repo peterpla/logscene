@@ -19,11 +19,14 @@ import (
 	"github.com/julienschmidt/httprouter"
 )
 
-// handleHome renders the new-webcam form.
+// handleHome renders the PoC dashboard.
 func (s *server) handleHome() httprouter.Handle {
 	return func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
-		data := struct{ Company string }{"Timelapse"}
-		if err := s.tmpl.ExecuteTemplate(w, "layout", data); err != nil {
+		data := struct {
+			Page  string
+			Title string
+		}{"dashboard", "Dashboard"}
+		if err := s.tmpl.ExecuteTemplate(w, "base", data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	}
