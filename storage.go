@@ -44,8 +44,9 @@ type LocalStorage struct{}
 func NewLocalStorage() *LocalStorage { return &LocalStorage{} }
 
 func (s *LocalStorage) Write(_ context.Context, key string, r io.Reader) error {
-	if err := os.MkdirAll(filepath.Dir(key), 0755); err != nil {
-		return fmt.Errorf("LocalStorage.Write: mkdir %s: %w", filepath.Dir(key), err)
+	dir := filepath.ToSlash(filepath.Dir(key))
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("LocalStorage.Write: mkdir %s: %w", dir, err)
 	}
 	f, err := os.Create(key)
 	if err != nil {
@@ -69,7 +70,7 @@ func (s *LocalStorage) Read(_ context.Context, key string) (io.ReadCloser, error
 }
 
 func (s *LocalStorage) List(_ context.Context, prefix string) ([]string, error) {
-	dir := filepath.Dir(prefix)
+	dir := filepath.ToSlash(filepath.Dir(prefix))
 	base := filepath.Base(prefix)
 
 	entries, err := os.ReadDir(dir)
@@ -80,7 +81,7 @@ func (s *LocalStorage) List(_ context.Context, prefix string) ([]string, error) 
 	var keys []string
 	for _, e := range entries {
 		if !e.IsDir() && strings.HasPrefix(e.Name(), base) {
-			keys = append(keys, filepath.Join(dir, e.Name()))
+			keys = append(keys, dir+"/"+e.Name())
 		}
 	}
 	sort.Strings(keys)

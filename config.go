@@ -6,6 +6,7 @@ import (
 	"flag"
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 )
 
@@ -39,12 +40,12 @@ func (c *Config) loadFrom(fs *flag.FlagSet, args []string, getenv func(string) s
 	base    := fs.String("base",    "", "root directory for captured images (env: LOGSCENE_BASE, default: ./captures)")
 	fs.Parse(args) //nolint:errcheck
 
-	c.Path    = coalesce(*path,    getenv("LOGSCENE_PATH"),    "./")
+	c.Path    = filepath.ToSlash(coalesce(*path,    getenv("LOGSCENE_PATH"),    "./"))
 	c.Port    = coalesce(*port,    getenv("PORT"),              getenv("LOGSCENE_PORT"), "8099")
 	c.TzdbAPI = coalesce(*tzdb,    getenv("LOGSCENE_TZDB"))
-	c.LogDir  = coalesce(*logdir,  getenv("LOGSCENE_LOGDIR"),  "./logs")
+	c.LogDir  = filepath.ToSlash(coalesce(*logdir,  getenv("LOGSCENE_LOGDIR"),  "./logs"))
 	c.Storage = coalesce(*storage, getenv("LOGSCENE_STORAGE"), "local")
-	c.BaseDir = coalesce(*base,    getenv("LOGSCENE_BASE"),    "./captures")
+	c.BaseDir = filepath.ToSlash(coalesce(*base,    getenv("LOGSCENE_BASE"),    "./captures"))
 
 	if *poll != 0 {
 		c.PollSecs = *poll

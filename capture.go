@@ -106,10 +106,11 @@ func capture(ctx context.Context, wc *Webcam, pollInterval time.Duration, srv *s
 				wc.recordFailure()
 				wc.mu.RLock()
 				since := time.Since(wc.FirstFailure).Truncate(time.Minute)
-				next := wc.nextRetryInterval()
+				backoff := wc.nextRetryInterval()
 				wc.mu.RUnlock()
-				log.Printf("%s: CaptureImage failed (failing %v, next attempt in %v): %v",
-					name, since, next, err)
+				effectiveNext := max(backoff, pollInterval)
+				log.Printf("%s: CaptureImage failed (failing %v, next attempt in ~%v (backoff %v, poll interval %v)): %v",
+					name, since, effectiveNext, backoff, pollInterval, err)
 				continue
 			}
 
