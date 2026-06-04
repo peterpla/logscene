@@ -3,7 +3,7 @@
 package main
 
 // webcam.go defines Webcam (one webcam's capture configuration) and Webcams
-// (the full list, backed by timelapse.json).
+// (the full list, backed by logscene.json).
 //
 // Naming note: "Webcam" describes what this struct actually is — the settings
 // for one physical camera. When video rendering is added, the render
@@ -41,7 +41,7 @@ const (
 
 // Webcam holds everything needed to capture images from one physical camera.
 //
-// Persisted fields are serialized to timelapse.json; runtime fields are
+// Persisted fields are serialized to logscene.json; runtime fields are
 // tagged json:"-" and populated each day by SetCaptureTimes.
 type Webcam struct {
 	// --- persisted fields ---
@@ -136,9 +136,9 @@ func (wc *Webcam) SetFirstLastFlags() error {
 // Webcams — persisted list of all webcam configurations
 // ---------------------------------------------------------------------------
 
-const masterFile = "timelapse.json"
+const masterFile = "logscene.json"
 
-// Webcams is the ordered list of all configured webcams, persisted to timelapse.json.
+// Webcams is the ordered list of all configured webcams, persisted to logscene.json.
 type Webcams []*Webcam
 
 func newWebcams() *Webcams {
@@ -146,7 +146,7 @@ func newWebcams() *Webcams {
 	return ws
 }
 
-// Read loads and validates timelapse.json into ws.
+// Read loads and validates logscene.json into ws.
 func (ws *Webcams) Read(path string, validate *validator.Validate) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -171,7 +171,7 @@ func (ws *Webcams) Read(path string, validate *validator.Validate) error {
 	return nil
 }
 
-// Write validates and writes ws to timelapse.json.
+// Write validates and writes ws to logscene.json.
 func (ws Webcams) Write(dir string, validate *validator.Validate) error {
 	for i, wc := range ws {
 		if err := validate.Struct(wc); err != nil {

@@ -183,7 +183,7 @@ func TestHandleLogs_returnsLines(t *testing.T) {
 	srv.router.GET("/logs", srv.handleLogs())
 
 	// Write a fake log file named for today.
-	logPath := filepath.Join(srv.config.LogDir, "timelapse-"+time.Now().Format("2006-01-02")+".log")
+	logPath := filepath.Join(srv.config.LogDir, "logscene-"+time.Now().Format("2006-01-02")+".log")
 	content := "line1\nline2\nline3\nline4\nline5\n"
 	if err := os.WriteFile(logPath, []byte(content), 0644); err != nil {
 		t.Fatalf("write log: %v", err)
@@ -209,7 +209,7 @@ func TestHandleLogs_nParam(t *testing.T) {
 	srv.router.GET("/logs", srv.handleLogs())
 
 	// Write 10 lines; request only the last 3.
-	logPath := filepath.Join(srv.config.LogDir, "timelapse-"+time.Now().Format("2006-01-02")+".log")
+	logPath := filepath.Join(srv.config.LogDir, "logscene-"+time.Now().Format("2006-01-02")+".log")
 	var sb strings.Builder
 	for i := 1; i <= 10; i++ {
 		fmt.Fprintf(&sb, "line%d\n", i)

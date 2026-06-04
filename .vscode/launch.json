@@ -11,11 +11,11 @@
             "mode": "test",
             "program": "C:\\Users\\peter\\OneDrive\\Coding\\Timelapse", // ${fileDirname} doesn't work here
             "env": {
-                "TIMELAPSE_PATH": "C:\\Users\\peter\\OneDrive\\Coding\\Timelapse",
-                "TIMELAPSE_POLL": "60",
-                "TIMELAPSE_PORT": "8099",
-                "TIMELAPSE_TZDB": "YOUR_TIMELAPSE_TZDB_KEY_HERE",
-                "TIMELAPSE_LOGDIR": "C:\\Users\\peter\\OneDrive\\Pictures\\Timelapse\\logs"
+                "LOGSCENE_PATH": "C:\\Users\\peter\\OneDrive\\Coding\\Timelapse",
+                "LOGSCENE_POLL": "60",
+                "LOGSCENE_PORT": "8099",
+                "LOGSCENE_TZDB": "YOUR_LOGSCENE_TZDB_KEY_HERE",
+                "LOGSCENE_LOGDIR": "C:\\Users\\peter\\OneDrive\\Pictures\\Timelapse\\logs"
             }
         },
         {
@@ -25,11 +25,11 @@
             "mode": "auto",
             "program": "C:\\Users\\peter\\OneDrive\\Coding\\Timelapse", // ${fileDirname} doesn't work here
             "env": {
-                "TIMELAPSE_PATH": "C:\\Users\\peter\\OneDrive\\Coding\\Timelapse",
-                "TIMELAPSE_POLL": "60",
-                "TIMELAPSE_PORT": "8099",
-                "TIMELAPSE_TZDB": "YOUR_TIMELAPSE_TZDB_KEY_HERE",
-                "TIMELAPSE_LOGDIR": "C:\\Users\\peter\\OneDrive\\Pictures\\Timelapse\\logs"
+                "LOGSCENE_PATH": "C:\\Users\\peter\\OneDrive\\Coding\\Timelapse",
+                "LOGSCENE_POLL": "60",
+                "LOGSCENE_PORT": "8099",
+                "LOGSCENE_TZDB": "YOUR_LOGSCENE_TZDB_KEY_HERE",
+                "LOGSCENE_LOGDIR": "C:\\Users\\peter\\OneDrive\\Pictures\\Timelapse\\logs"
             },
             "args": []
         }

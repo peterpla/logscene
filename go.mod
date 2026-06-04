@@ -1,4 +1,4 @@
-module github.com/peterpla/timelapse
+module github.com/peterpla/logscene
 
 go 1.25.0
 

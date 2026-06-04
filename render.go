@@ -91,7 +91,7 @@ func (r *LocalRenderer) Render(ctx context.Context, dir, outputKey string, opts 
 	}
 	log.Printf("Render: %d frames → %s", len(frames), outputKey)
 
-	tmp, err := os.CreateTemp("", "timelapse-concat-*.txt")
+	tmp, err := os.CreateTemp("", "logscene-concat-*.txt")
 	if err != nil {
 		return fmt.Errorf("Render: create concat file: %w", err)
 	}

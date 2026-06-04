@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go test *)",
+      "Bash(go tool *)"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\Peter\\.claude\\plans"
+    ]
+  }
+}

@@ -199,7 +199,7 @@ func (s *server) handleLogs() httprouter.Handle {
 			}
 		}
 
-		logPath := filepath.Join(s.config.LogDir, "timelapse-"+time.Now().Format("2006-01-02")+".log")
+		logPath := filepath.Join(s.config.LogDir, "logscene-"+time.Now().Format("2006-01-02")+".log")
 		data, err := os.ReadFile(logPath)
 		if err != nil {
 			http.Error(w, "log file not available: "+err.Error(), http.StatusNotFound)
@@ -260,7 +260,7 @@ func (s *server) handleRender() httprouter.Handle {
 	}
 }
 
-// handleReload stops all capture goroutines, re-reads timelapse.json, and
+// handleReload stops all capture goroutines, re-reads logscene.json, and
 // restarts them. It validates the new config before stopping anything, so a
 // bad config file leaves the running goroutines untouched.
 // The response is returned after the new goroutines are launched; the 2 s

@@ -33,7 +33,7 @@ func TestOpenLogFile(t *testing.T) {
 		t.Fatalf("openLogFile: %v", err)
 	}
 
-	expected := filepath.Join(dir, "timelapse-2026-06-01.log")
+	expected := filepath.Join(dir, "logscene-2026-06-01.log")
 	if _, err := os.Stat(expected); err != nil {
 		t.Fatalf("log file not created: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestOpenLogFile_rotatesFile(t *testing.T) {
 	}
 
 	// Second log file should exist.
-	expected := filepath.Join(dir, "timelapse-2026-06-02.log")
+	expected := filepath.Join(dir, "logscene-2026-06-02.log")
 	if _, err := os.Stat(expected); err != nil {
 		t.Fatalf("second log file not created: %v", err)
 	}

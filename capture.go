@@ -12,7 +12,7 @@ package main
 //	2 d – 2 weeks retry once per day                     (tier 3)
 //	> 2 weeks     auto-suspend: goroutine exits with a   (tier 4)
 //	              prominent log message; set
-//	              "disabled": true in timelapse.json to
+//	              "disabled": true in logscene.json to
 //	              suppress on restart, or restart the
 //	              server to try again.
 //
@@ -58,10 +58,10 @@ func capture(ctx context.Context, wc *Webcam, pollInterval time.Duration, srv *s
 
 	if tzWasEmpty {
 		if err := srv.webcams.Write(srv.config.Path, srv.validate); err != nil {
-			log.Printf("%s: persist timezone to timelapse.json: %v", name, err)
+			log.Printf("%s: persist timezone to logscene.json: %v", name, err)
 		} else {
 			wc.mu.RLock()
-			log.Printf("%s: cached timezone %q in timelapse.json", name, wc.WebcamTZ)
+			log.Printf("%s: cached timezone %q in logscene.json", name, wc.WebcamTZ)
 			wc.mu.RUnlock()
 		}
 	}
@@ -88,7 +88,7 @@ func capture(ctx context.Context, wc *Webcam, pollInterval time.Duration, srv *s
 		case <-ticker.C:
 			if wc.autoSuspendDue() {
 				log.Printf("%s: auto-suspended after %v of consecutive failures — goroutine exiting.\n"+
-					"  Set \"disabled\": true in timelapse.json to suppress on restart,\n"+
+					"  Set \"disabled\": true in logscene.json to suppress on restart,\n"+
 					"  or restart the server to try again.",
 					name, outageAutoSuspendAfter)
 				return

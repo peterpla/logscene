@@ -175,7 +175,7 @@ func TestWebcams_WriteAndRead(t *testing.T) {
 
 	path := filepath.Join(dir, masterFile)
 	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("timelapse.json not written: %v", err)
+		t.Fatalf("logscene.json not written: %v", err)
 	}
 
 	ws2 := newWebcams()
@@ -214,7 +214,7 @@ func TestWebcams_Delete(t *testing.T) {
 
 func TestWebcams_Read_missingFile(t *testing.T) {
 	ws := newWebcams()
-	if err := ws.Read("/nonexistent/path/timelapse.json", validator.New()); err == nil {
+	if err := ws.Read("/nonexistent/path/logscene.json", validator.New()); err == nil {
 		t.Error("expected error for missing file, got nil")
 	}
 }
@@ -254,7 +254,7 @@ func TestWebcams_Write_validationError(t *testing.T) {
 	}
 	// Confirm no file was written.
 	if _, serr := os.Stat(filepath.Join(dir, masterFile)); serr == nil {
-		t.Error("timelapse.json should not have been created when validation fails")
+		t.Error("logscene.json should not have been created when validation fails")
 	}
 }
 

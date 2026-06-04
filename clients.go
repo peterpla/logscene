@@ -55,7 +55,7 @@ func NewHTTPTimezoneClient(apiKey string) *HTTPTimezoneClient {
 // It retries automatically on HTTP 429 (rate-limited to 1 req/s by timezonedb.com).
 func (c *HTTPTimezoneClient) GetTimezone(ctx context.Context, lat, lng float64) (string, error) {
 	if c.apiKey == "" {
-		return "", fmt.Errorf("timezonedb API key not configured (set TIMELAPSE_TZDB)")
+		return "", fmt.Errorf("timezonedb API key not configured (set LOGSCENE_TZDB)")
 	}
 
 	q := url.Values{}

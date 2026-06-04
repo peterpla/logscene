@@ -125,7 +125,7 @@ func newServer() *server {
 	cfg.Load()
 
 	if cfg.TzdbAPI == "" {
-		fmt.Fprintln(os.Stderr, "TIMELAPSE_TZDB (or -tzdb flag) is required")
+		fmt.Fprintln(os.Stderr, "LOGSCENE_TZDB (or -tzdb flag) is required")
 		os.Exit(1)
 	}
 
@@ -213,7 +213,7 @@ func openLogFile(logDir string, date time.Time) error {
 	if err := os.MkdirAll(logDir, 0755); err != nil {
 		return fmt.Errorf("openLogFile: MkdirAll %s: %w", logDir, err)
 	}
-	name := filepath.Join(logDir, "timelapse-"+date.Format("2006-01-02")+".log")
+	name := filepath.Join(logDir, "logscene-"+date.Format("2006-01-02")+".log")
 	f, err := os.OpenFile(name, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return fmt.Errorf("openLogFile: %w", err)

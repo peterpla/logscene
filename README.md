@@ -1,4 +1,4 @@
-# timelapse
+# LogScene
 
 A lightweight Go server that captures images from public webcam URLs on a
 solar-aware schedule and assembles them into timelapse videos with ffmpeg.
@@ -16,7 +16,7 @@ year of captures at 49 shots/day yields roughly 6 minutes of video at 24 fps.
 - [Building](#building)
 - [Configuration](#configuration)
 - [Running](#running)
-- [Webcam configuration (timelapse.json)](#webcam-configuration-timelapsejson)
+- [Webcam configuration (logscene.json)](#webcam-configuration-timelapsejson)
 - [API reference](#api-reference)
 - [Rendering a timelapse video](#rendering-a-timelapse-video)
 - [Development](#development)
@@ -59,7 +59,7 @@ year of captures at 49 shots/day yields roughly 6 minutes of video at 24 fps.
 # PowerShell (Windows)
 $version   = git describe --tags --always --dirty
 $builddate = Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ"
-go build -ldflags "-X main.Version=$version -X main.BuildDate=$builddate" -o timelapse.exe .
+go build -ldflags "-X main.Version=$version -X main.BuildDate=$builddate" -o logscene.exe .
 ```
 
 ```bash
@@ -80,22 +80,22 @@ variables**. Flags take priority over environment variables.
 
 | Flag | Environment variable | Default | Description |
 |---|---|---|---|
-| `-tzdb` | `TIMELAPSE_TZDB` | *(required)* | [TimezoneDB](https://timezonedb.com) API key |
-| `-base` | `TIMELAPSE_BASE` | `./captures` | Root directory where webcam image folders are created |
-| `-path` | `TIMELAPSE_PATH` | `./` | Directory containing `timelapse.json` |
-| `-logdir` | `TIMELAPSE_LOGDIR` | `./logs` | Directory for daily rotating log files |
-| `-port` | `PORT` or `TIMELAPSE_PORT` | `8099` | HTTP listen port (`PORT` checked first for Cloud Run compatibility) |
-| `-poll` | `TIMELAPSE_POLL` | `60` | Seconds between capture-due checks |
-| `-storage` | `TIMELAPSE_STORAGE` | `local` | Storage backend: `local` (GCS and S3 not yet implemented) |
+| `-tzdb` | `LOGSCENE_TZDB` | *(required)* | [TimezoneDB](https://timezonedb.com) API key |
+| `-base` | `LOGSCENE_BASE` | `./captures` | Root directory where webcam image folders are created |
+| `-path` | `LOGSCENE_PATH` | `./` | Directory containing `logscene.json` |
+| `-logdir` | `LOGSCENE_LOGDIR` | `./logs` | Directory for daily rotating log files |
+| `-port` | `PORT` or `LOGSCENE_PORT` | `8099` | HTTP listen port (`PORT` checked first for Cloud Run compatibility) |
+| `-poll` | `LOGSCENE_POLL` | `60` | Seconds between capture-due checks |
+| `-storage` | `LOGSCENE_STORAGE` | `local` | Storage backend: `local` (GCS and S3 not yet implemented) |
 
 ### Example (PowerShell)
 
 ```powershell
-$env:TIMELAPSE_TZDB    = "your_api_key_here"
-$env:TIMELAPSE_BASE    = "C:\Pictures\Timelapse"
-$env:TIMELAPSE_PATH    = "C:\Pictures\Timelapse"
-$env:TIMELAPSE_LOGDIR  = "C:\Pictures\Timelapse\logs"
-.\timelapse.exe
+$env:LOGSCENE_TZDB    = "your_api_key_here"
+$env:LOGSCENE_BASE    = "C:\Pictures\LogScene"
+$env:LOGSCENE_PATH    = "C:\Pictures\LogScene"
+$env:LOGSCENE_LOGDIR  = "C:\Pictures\LogScene\logs"
+.\logscene.exe
 ```
 
 ---
@@ -103,7 +103,7 @@ $env:TIMELAPSE_LOGDIR  = "C:\Pictures\Timelapse\logs"
 ## Running
 
 On startup the server:
-1. Reads `timelapse.json` and launches one capture goroutine per webcam
+1. Reads `logscene.json` and launches one capture goroutine per webcam
 2. Prints `GET /info`, `GET /status`, and `GET /next` responses to stdout
    so the operator gets immediate confirmation even when logs are redirected
 3. Listens for `SIGINT` (Ctrl-C) to shut down gracefully
@@ -111,15 +111,15 @@ On startup the server:
 To launch in a separate window (PowerShell):
 
 ```powershell
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "& 'C:\path\to\timelapse.exe'"
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "& 'C:\path\to\logscene.exe'"
 ```
 
 ---
 
-## Webcam configuration (timelapse.json)
+## Webcam configuration (logscene.json)
 
-Webcams are stored in `timelapse.json` in the directory specified by
-`-path` / `TIMELAPSE_PATH`. The file is created and updated by `POST /new`
+Webcams are stored in `logscene.json` in the directory specified by
+`-path` / `LOGSCENE_PATH`. The file is created and updated by `POST /new`
 but can also be edited by hand (restart required to pick up manual changes).
 
 ```json
@@ -170,7 +170,7 @@ but can also be edited by hand (restart required to pick up manual changes).
 and last capture. `additional: 47` yields 49 shots/day (≈ one every 15
 minutes across a 12-hour day).
 
-**`folder`** — subdirectory name under `TIMELAPSE_BASE` where images are
+**`folder`** — subdirectory name under `LOGSCENE_BASE` where images are
 stored. Images are named `<webcam name> YYYYMMDDhhmmss.jpg`.
 
 **`webcamTZ`** — IANA timezone name, cached automatically after the first
@@ -189,7 +189,7 @@ it from the file.
 | `GET` | `/status` | Server health, webcam count, uptime |
 | `GET` | `/next` | Webcam name and time of next scheduled capture |
 | `GET` | `/logs[?n=N]` | Last N lines of today's log file (default 20) |
-| `POST` | `/new` | Add a webcam (form-encoded, same fields as timelapse.json) |
+| `POST` | `/new` | Add a webcam (form-encoded, same fields as logscene.json) |
 | `POST` | `/render` | Render a timelapse video (JSON body, see below) |
 
 ### GET /info
@@ -232,7 +232,7 @@ Invoke-RestMethod -Method Post `
   -ContentType "application/json" `
   -Body '{
     "folder": "kohm-yah-mah-nee",
-    "output": "C:/Pictures/Timelapse/kohm-yah-mah-nee.mp4",
+    "output": "C:/Pictures/LogScene/kohm-yah-mah-nee.mp4",
     "start": "2026-05-30",
     "end":   "2026-06-02",
     "fps":   24
@@ -241,7 +241,7 @@ Invoke-RestMethod -Method Post `
 
 | Field | Required | Description |
 |---|---|---|
-| `folder` | Yes | Webcam folder name under `TIMELAPSE_BASE` |
+| `folder` | Yes | Webcam folder name under `LOGSCENE_BASE` |
 | `output` | Yes | Full path for the output `.mp4` file |
 | `start` | No | `YYYY-MM-DD` — include only frames on or after this date |
 | `end` | No | `YYYY-MM-DD` — include only frames on or before this date |
@@ -280,4 +280,4 @@ ffmpeg code path but skips a hard failure if ffmpeg is not on `PATH`.
 
 ## License
 
-[MIT](LICENSE)
+[All Rights Reserved](LICENSE)

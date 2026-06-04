@@ -70,13 +70,13 @@ func TestConfigDefaults(t *testing.T) {
 func TestConfigEnvVars(t *testing.T) {
 	var c Config
 	c.loadFrom(newFS(), nil, envMap(map[string]string{
-		"TIMELAPSE_PATH":    "/data",
-		"TIMELAPSE_PORT":    "9000",
-		"TIMELAPSE_POLL":    "30",
-		"TIMELAPSE_TZDB":    "mykey",
-		"TIMELAPSE_LOGDIR":  "/var/log",
-		"TIMELAPSE_STORAGE": "gcs",
-		"TIMELAPSE_BASE":    "/images",
+		"LOGSCENE_PATH":    "/data",
+		"LOGSCENE_PORT":    "9000",
+		"LOGSCENE_POLL":    "30",
+		"LOGSCENE_TZDB":    "mykey",
+		"LOGSCENE_LOGDIR":  "/var/log",
+		"LOGSCENE_STORAGE": "gcs",
+		"LOGSCENE_BASE":    "/images",
 	}))
 
 	if c.Path != "/data" {
@@ -102,14 +102,14 @@ func TestConfigEnvVars(t *testing.T) {
 	}
 }
 
-func TestConfigPORTBeforeTIMELAPSE_PORT(t *testing.T) {
+func TestConfigPORTBeforeLOGSCENE_PORT(t *testing.T) {
 	var c Config
 	c.loadFrom(newFS(), nil, envMap(map[string]string{
 		"PORT":           "8080",
-		"TIMELAPSE_PORT": "9000",
+		"LOGSCENE_PORT": "9000",
 	}))
 	if c.Port != "8080" {
-		t.Errorf("Port = %q, want 8080 (PORT must take priority over TIMELAPSE_PORT)", c.Port)
+		t.Errorf("Port = %q, want 8080 (PORT must take priority over LOGSCENE_PORT)", c.Port)
 	}
 }
 
@@ -117,7 +117,7 @@ func TestConfigFlagOverridesEnv(t *testing.T) {
 	var c Config
 	c.loadFrom(newFS(), []string{"-port", "7777"}, envMap(map[string]string{
 		"PORT":           "8080",
-		"TIMELAPSE_PORT": "9000",
+		"LOGSCENE_PORT": "9000",
 	}))
 	if c.Port != "7777" {
 		t.Errorf("Port = %q, want 7777 (flag must take priority over env vars)", c.Port)
@@ -135,9 +135,9 @@ func TestConfigPollFlag(t *testing.T) {
 func TestConfigPollFlagOverridesEnv(t *testing.T) {
 	var c Config
 	c.loadFrom(newFS(), []string{"-poll", "45"}, envMap(map[string]string{
-		"TIMELAPSE_POLL": "120",
+		"LOGSCENE_POLL": "120",
 	}))
 	if c.PollSecs != 45 {
-		t.Errorf("PollSecs = %d, want 45 (flag must take priority over TIMELAPSE_POLL)", c.PollSecs)
+		t.Errorf("PollSecs = %d, want 45 (flag must take priority over LOGSCENE_POLL)", c.PollSecs)
 	}
 }
