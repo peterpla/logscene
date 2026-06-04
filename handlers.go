@@ -89,6 +89,14 @@ func (s *server) handleNew() httprouter.Handle {
 			return
 		}
 
+		// Reject folder values that escape BaseDir (path traversal).
+		base := filepath.Clean(s.config.BaseDir)
+		resolved := filepath.Clean(filepath.Join(base, wc.Folder))
+		if !strings.HasPrefix(resolved, base+string(filepath.Separator)) {
+			http.Error(w, "invalid folder path", http.StatusBadRequest)
+			return
+		}
+
 		// For local storage, pre-create the destination directory.
 		if _, ok := s.storage.(*LocalStorage); ok {
 			dir := filepath.Join(s.config.BaseDir, wc.Folder)

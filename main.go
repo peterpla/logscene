@@ -92,7 +92,7 @@ func main() {
 	srv.router.POST("/reload", srv.handleReload())
 
 	hs := &http.Server{
-		Addr:         ":" + srv.config.Port,
+		Addr:         "127.0.0.1:" + srv.config.Port,
 		Handler:      srv.router,
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,

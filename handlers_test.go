@@ -475,6 +475,32 @@ func TestHandleNew_success(t *testing.T) {
 	}
 }
 
+func TestHandleNew_folderTraversal(t *testing.T) {
+	srv := newTestServer(t)
+	srv.router.POST("/new", srv.handleNew())
+
+	for _, folder := range []string{"../evil", "../../etc/passwd", "..", "good/../../../evil"} {
+		form := url.Values{}
+		form.Set("name", "Test Cam")
+		form.Set("webcamUrl", "http://example.com/cam.jpg")
+		form.Set("latitude", "37.77")
+		form.Set("longitude", "-122.42")
+		form.Set("additional", "0")
+		form.Set("folder", folder)
+		form.Set("firstSunrise", "on")
+		form.Set("lastSunset", "on")
+
+		req := httptest.NewRequest(http.MethodPost, "/new", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		srv.router.ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("folder %q: want 400, got %d", folder, w.Code)
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // GET /info
 // ---------------------------------------------------------------------------
