@@ -46,6 +46,7 @@ type server struct {
 	webcamWg     sync.WaitGroup     // capture goroutines only
 	mu           sync.RWMutex       // protects webcams, webcamCtx, webcamCancel
 	startTime    time.Time
+	trial        TrialState
 }
 
 var currentLogFile *os.File
@@ -59,7 +60,7 @@ func main() {
 	}
 
 	if err := openLogFile(srv.config.LogDir, time.Now()); err != nil {
-		log.Printf("main: openLogFile: %v (continuing with stderr)", err)
+		log.Printf("main: cannot open log file in %s: %v — log output going to console", srv.config.LogDir, err)
 	}
 
 	// Start daily log-rotation goroutine.
@@ -68,10 +69,14 @@ func main() {
 
 	// Launch one capture goroutine per webcam.
 	// Sleep 2 s between launches to respect timezonedb.com's 1 req/s rate limit.
-	for _, wc := range *srv.webcams {
-		srv.webcamWg.Add(1)
-		go capture(srv.webcamCtx, wc, time.Duration(srv.config.PollSecs)*time.Second, srv)
-		time.Sleep(2 * time.Second)
+	if srv.trial.capturesStopped() {
+		log.Printf("main: trial %s — captures disabled", srv.trial)
+	} else {
+		for _, wc := range *srv.webcams {
+			srv.webcamWg.Add(1)
+			go capture(srv.webcamCtx, wc, time.Duration(srv.config.PollSecs)*time.Second, srv)
+			time.Sleep(2 * time.Second)
+		}
 	}
 
 	if err := srv.initTemplates(); err != nil {
@@ -130,6 +135,15 @@ func newServer() *server {
 		os.Exit(1)
 	}
 
+	installDate, err := readOrSetInstallDate()
+	if err != nil {
+		log.Fatalf("newServer: cannot read trial data from registry: %v\n"+
+			"  LogScene stores its trial state in HKCU\\Software\\LogScene.\n"+
+			"  If this error persists, contact support@logscene.net.", err)
+	}
+	trial := computeTrialState(installDate)
+	log.Printf("newServer: trial=%s (installed %s)", trial, installDate.Format("2006-01-02"))
+
 	store := buildStorage(cfg.Storage)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -149,6 +163,7 @@ func newServer() *server {
 		webcamCtx:    webcamCtx,
 		webcamCancel: webcamCancel,
 		startTime:    time.Now(),
+		trial:        trial,
 	}
 	return s
 }
@@ -157,9 +172,9 @@ func newServer() *server {
 func buildStorage(backend string) Storage {
 	switch strings.ToLower(backend) {
 	case "gcs":
-		log.Fatal("GCS storage not yet implemented")
+		log.Fatal("GCS storage not yet implemented — set LOGSCENE_STORAGE=local")
 	case "s3":
-		log.Fatal("S3 storage not yet implemented")
+		log.Fatal("S3 storage not yet implemented — set LOGSCENE_STORAGE=local")
 	}
 	return NewLocalStorage() // default: local
 }
@@ -167,7 +182,11 @@ func buildStorage(backend string) Storage {
 // startListening calls ListenAndServe and logs fatal errors.
 func startListening(hs *http.Server) {
 	if err := hs.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("startListening: %v", err)
+		port := hs.Addr
+		if i := strings.LastIndex(hs.Addr, ":"); i >= 0 {
+			port = hs.Addr[i+1:]
+		}
+		log.Fatalf("startListening: cannot listen on port %s: %v", port, err)
 	}
 }
 

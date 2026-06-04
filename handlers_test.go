@@ -692,6 +692,208 @@ func TestHandleRender_missingFields(t *testing.T) {
 // POST /new — validation (continued)
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// POST /render — trial enforcement
+// ---------------------------------------------------------------------------
+
+func TestHandleRender_trialReadOnly(t *testing.T) {
+	srv := newTestServer(t)
+	srv.trial = TrialReadOnly
+	srv.router.POST("/render", srv.handleRender())
+
+	body := `{"folder":"cam","output":"out.mp4"}`
+	req := httptest.NewRequest(http.MethodPost, "/render", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("TrialReadOnly: want 403, got %d", w.Code)
+	}
+}
+
+func TestHandleRender_trialGraceRender_firstCall(t *testing.T) {
+	// Ensure a clean slate in the registry before and after the test.
+	writeLastRenderDate("") //nolint:errcheck
+	t.Cleanup(func() { writeLastRenderDate("") }) //nolint:errcheck
+
+	srv := newTestServer(t)
+	srv.trial = TrialGraceRender
+	srv.renderer = &mockRenderer{}
+	srv.router.POST("/render", srv.handleRender())
+
+	body := `{"folder":"cam","output":"out.mp4"}`
+	req := httptest.NewRequest(http.MethodPost, "/render", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("GraceRender first call: want 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleRender_trialGraceRender_secondCallSameDay(t *testing.T) {
+	today := time.Now().Format("2006-01-02")
+	writeLastRenderDate(today) //nolint:errcheck
+	t.Cleanup(func() { writeLastRenderDate("") }) //nolint:errcheck
+
+	srv := newTestServer(t)
+	srv.trial = TrialGraceRender
+	srv.router.POST("/render", srv.handleRender())
+
+	body := `{"folder":"cam","output":"out.mp4"}`
+	req := httptest.NewRequest(http.MethodPost, "/render", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("GraceRender second call same day: want 403, got %d", w.Code)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// POST /new — trial enforcement
+// ---------------------------------------------------------------------------
+
+func TestHandleNew_trialCapturesStopped(t *testing.T) {
+	srv := newTestServer(t)
+	srv.trial = TrialGraceRender
+	srv.router.POST("/new", srv.handleNew())
+
+	form := url.Values{}
+	form.Set("name", "Test Cam")
+	form.Set("webcamUrl", "http://example.com/cam.jpg")
+	form.Set("latitude", "37.77")
+	form.Set("longitude", "-122.42")
+	form.Set("additional", "0")
+	form.Set("folder", "test-cam")
+	form.Set("firstSunrise", "on")
+	form.Set("lastSunset", "on")
+
+	req := httptest.NewRequest(http.MethodPost, "/new", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("capturesStopped: want 403, got %d", w.Code)
+	}
+}
+
+func TestHandleNew_trialSecondWebcamBlocked(t *testing.T) {
+	srv := newTestServer(t)
+	srv.trial = TrialActive
+	srv.mu.Lock()
+	srv.webcams.Append(newWebcam())
+	srv.mu.Unlock()
+	srv.router.POST("/new", srv.handleNew())
+
+	form := url.Values{}
+	form.Set("name", "Second Cam")
+	form.Set("webcamUrl", "http://example.com/cam.jpg")
+	form.Set("latitude", "37.77")
+	form.Set("longitude", "-122.42")
+	form.Set("additional", "0")
+	form.Set("folder", "second-cam")
+	form.Set("firstSunrise", "on")
+	form.Set("lastSunset", "on")
+
+	req := httptest.NewRequest(http.MethodPost, "/new", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("second webcam in trial: want 403, got %d", w.Code)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// POST /reload
+// ---------------------------------------------------------------------------
+
+// writeEmptyConfig writes an empty logscene.json to the server's config.Path
+// so handleReload has a valid file to read.
+func writeEmptyConfig(t *testing.T, srv *server) {
+	t.Helper()
+	if err := newWebcams().Write(srv.config.Path, srv.validate); err != nil {
+		t.Fatalf("writeEmptyConfig: %v", err)
+	}
+}
+
+func TestHandleReload_success(t *testing.T) {
+	srv := newTestServer(t)
+	writeEmptyConfig(t, srv)
+	srv.router.POST("/reload", srv.handleReload())
+
+	req := httptest.NewRequest(http.MethodPost, "/reload", nil)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Status  string `json:"status"`
+		Webcams int    `json:"webcams"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Status != "reloaded" {
+		t.Errorf("status: want %q, got %q", "reloaded", resp.Status)
+	}
+	if resp.Webcams != 0 {
+		t.Errorf("webcams: want 0, got %d", resp.Webcams)
+	}
+}
+
+func TestHandleReload_badConfig(t *testing.T) {
+	srv := newTestServer(t)
+	// Write invalid JSON where logscene.json should be.
+	badPath := fmt.Sprintf("%s/%s", srv.config.Path, masterFile)
+	if err := os.WriteFile(badPath, []byte("not-json"), 0644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	srv.router.POST("/reload", srv.handleReload())
+
+	req := httptest.NewRequest(http.MethodPost, "/reload", nil)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("bad config: want 400, got %d", w.Code)
+	}
+}
+
+func TestHandleReload_capturesStopped(t *testing.T) {
+	srv := newTestServer(t)
+	srv.trial = TrialGraceRender
+	writeEmptyConfig(t, srv)
+	srv.router.POST("/reload", srv.handleReload())
+
+	req := httptest.NewRequest(http.MethodPost, "/reload", nil)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Status string `json:"status"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Status != "reloaded" {
+		t.Errorf("status: want %q, got %q", "reloaded", resp.Status)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// POST /new — validation (continued)
+// ---------------------------------------------------------------------------
+
 func TestHandleNew_multipleFirstFlags(t *testing.T) {
 	srv := newTestServer(t)
 	srv.router.POST("/new", srv.handleNew())

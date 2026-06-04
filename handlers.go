@@ -113,6 +113,16 @@ func (s *server) handleNew() httprouter.Handle {
 		}
 
 		s.mu.Lock()
+		if s.trial.capturesStopped() {
+			s.mu.Unlock()
+			http.Error(w, "upgrade required — trial captures have stopped", http.StatusForbidden)
+			return
+		}
+		if len(*s.webcams) >= 1 {
+			s.mu.Unlock()
+			http.Error(w, "trial limited to 1 webcam — upgrade to add more", http.StatusForbidden)
+			return
+		}
 		s.webcams.Append(wc)
 		wcCtx := s.webcamCtx
 		s.webcamWg.Add(1)
@@ -231,6 +241,25 @@ type renderRequest struct {
 // handleRender triggers an ffmpeg render for a stored folder of images.
 func (s *server) handleRender() httprouter.Handle {
 	return func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+		switch s.trial {
+		case TrialReadOnly:
+			http.Error(w, "trial period ended — upgrade to render", http.StatusForbidden)
+			return
+		case TrialGraceRender:
+			today := time.Now().Format("2006-01-02")
+			last, err := readLastRenderDate()
+			if err != nil {
+				log.Printf("handleRender: readLastRenderDate: %v", err)
+			}
+			if last == today {
+				http.Error(w, "grace period: one render per day — try again tomorrow", http.StatusForbidden)
+				return
+			}
+			if err := writeLastRenderDate(today); err != nil {
+				log.Printf("handleRender: writeLastRenderDate: %v — WARNING: grace-period render limit may not be enforced today", err)
+			}
+		}
+
 		var req renderRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
@@ -251,7 +280,7 @@ func (s *server) handleRender() httprouter.Handle {
 		ctx := s.ctx
 		go func() {
 			if err := s.renderer.Render(ctx, dir, req.Output, opts); err != nil {
-				log.Printf("handleRender: %v", err)
+				log.Printf("handleRender: folder=%s output=%s: %v", req.Folder, req.Output, err)
 			}
 		}()
 
@@ -291,12 +320,16 @@ func (s *server) handleReload() httprouter.Handle {
 		s.mu.Unlock()
 
 		// Relaunch with 2 s stagger to respect timezonedb.com rate limit.
-		for i, wc := range *fresh {
-			if i > 0 {
-				time.Sleep(2 * time.Second)
+		if s.trial.capturesStopped() {
+			log.Printf("handleReload: trial %s — captures disabled", s.trial)
+		} else {
+			for i, wc := range *fresh {
+				if i > 0 {
+					time.Sleep(2 * time.Second)
+				}
+				s.webcamWg.Add(1)
+				go capture(newCtx, wc, time.Duration(s.config.PollSecs)*time.Second, s)
 			}
-			s.webcamWg.Add(1)
-			go capture(newCtx, wc, time.Duration(s.config.PollSecs)*time.Second, s)
 		}
 
 		n := len(*fresh)

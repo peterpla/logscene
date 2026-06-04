@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -428,6 +429,32 @@ func TestUpdateNextCapture_contextCancelledDuringRetry(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("want context.Canceled, got: %v", err)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// captureViaFfmpeg — lavfi synthetic source (skipped if ffmpeg absent)
+// ---------------------------------------------------------------------------
+
+func TestCaptureViaFfmpeg_lavfi(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not found in PATH")
+	}
+	store := NewMemStorage()
+	key := "test/output.jpg"
+	// lavfi testsrc generates a synthetic video frame with no hardware required.
+	args := []string{"-f", "lavfi", "-i", "testsrc=duration=1:size=10x10"}
+	size, err := captureViaFfmpeg(context.Background(), args, store, key)
+	if err != nil {
+		t.Fatalf("captureViaFfmpeg: %v", err)
+	}
+	if size == 0 {
+		t.Error("expected non-zero output size")
+	}
+	rc, err := store.Read(context.Background(), key)
+	if err != nil {
+		t.Fatalf("Read after capture: %v", err)
+	}
+	rc.Close()
 }
 
 func TestUpdateNextCapture_rollsOverToTomorrow(t *testing.T) {

@@ -203,6 +203,37 @@ func TestLocalStorage_List_missingDir(t *testing.T) {
 	}
 }
 
+func TestLocalStorage_List_success(t *testing.T) {
+	dir := t.TempDir()
+	store := NewLocalStorage()
+	ctx := context.Background()
+
+	// Write three files and one directory entry to the temp dir.
+	for _, name := range []string{"cam 001.jpg", "cam 002.jpg", "cam 003.jpg"} {
+		if err := store.Write(ctx, filepath.Join(dir, name), strings.NewReader("data")); err != nil {
+			t.Fatalf("Write %s: %v", name, err)
+		}
+	}
+	// Also write a file that should not match the prefix.
+	if err := store.Write(ctx, filepath.Join(dir, "other.jpg"), strings.NewReader("x")); err != nil {
+		t.Fatalf("Write other.jpg: %v", err)
+	}
+
+	prefix := filepath.Join(dir, "cam ")
+	listed, err := store.List(ctx, prefix)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(listed) != 3 {
+		t.Fatalf("want 3 keys, got %d: %v", len(listed), listed)
+	}
+	for i := 1; i < len(listed); i++ {
+		if listed[i] < listed[i-1] {
+			t.Errorf("List not sorted at index %d", i)
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------

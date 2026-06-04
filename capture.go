@@ -55,7 +55,9 @@ func capture(ctx context.Context, wc *Webcam, pollInterval time.Duration, srv *s
 	wc.mu.RUnlock()
 
 	if err := wc.SetCaptureTimes(ctx, time.Now(), srv.tz, srv.solar); err != nil {
-		log.Printf("%s: SetCaptureTimes failed: %v — exiting", name, err)
+		log.Printf("%s: SetCaptureTimes failed: %v — exiting.\n"+
+			"  Restart the server to retry, or set \"disabled\": true in logscene.json to suppress.",
+			name, err)
 		return
 	}
 
@@ -70,7 +72,9 @@ func capture(ctx context.Context, wc *Webcam, pollInterval time.Duration, srv *s
 	}
 
 	if err := wc.UpdateNextCapture(ctx, time.Now(), srv.tz, srv.solar); err != nil {
-		log.Printf("%s: UpdateNextCapture failed: %v — exiting", name, err)
+		log.Printf("%s: UpdateNextCapture failed: %v — exiting.\n"+
+			"  Restart the server to retry, or set \"disabled\": true in logscene.json to suppress.",
+			name, err)
 		return
 	}
 
@@ -118,7 +122,9 @@ func capture(ctx context.Context, wc *Webcam, pollInterval time.Duration, srv *s
 			log.Printf("%s: captured %s (%d bytes)", name, key, size)
 
 			if err := wc.UpdateNextCapture(ctx, time.Now(), srv.tz, srv.solar); err != nil {
-				log.Printf("%s: UpdateNextCapture: %v — exiting", name, err)
+				log.Printf("%s: UpdateNextCapture: %v — exiting.\n"+
+					"  Restart the server to retry, or set \"disabled\": true in logscene.json to suppress.",
+					name, err)
 				return
 			}
 		}
@@ -142,9 +148,6 @@ func (wc *Webcam) shouldAttemptNow() bool {
 		return true // no active failure streak — attempt immediately
 	}
 	interval := wc.currentRetryInterval()
-	if interval == 0 {
-		return true
-	}
 	return time.Since(wc.LastAttempt) >= interval
 }
 
