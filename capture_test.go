@@ -289,7 +289,7 @@ func TestCaptureImage_success(t *testing.T) {
 		contentType: "image/jpeg",
 	}
 
-	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 0)
+	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 15)
 	wc.CaptureTimes = []time.Time{time.Date(2026, 6, 1, 13, 0, 0, 0, time.UTC)}
 	wc.NextCapture = 0
 
@@ -314,7 +314,7 @@ func TestCaptureImage_fetchError(t *testing.T) {
 	baseDir := t.TempDir()
 	fetcher := &mockImageFetcher{err: errors.New("connection refused")}
 
-	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 0)
+	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 15)
 	wc.CaptureTimes = []time.Time{time.Now()}
 	wc.NextCapture = 0
 
@@ -334,7 +334,7 @@ func TestCaptureImage_keyUsesScheduledTime(t *testing.T) {
 	fetcher := &mockImageFetcher{data: []byte("img"), contentType: "image/png"}
 
 	scheduled := time.Date(2026, 6, 1, 14, 30, 0, 0, time.UTC)
-	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 0)
+	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 15)
 	wc.Name = "My Cam"
 	wc.CaptureTimes = []time.Time{scheduled}
 	wc.NextCapture = 0
@@ -357,7 +357,7 @@ func TestUpdateNextCapture_advancesIndex(t *testing.T) {
 	tzClient := &fixedTimezoneClient{tz: "America/Los_Angeles"}
 	solar := &fixedSolarClient{times: laFixedSolar()}
 
-	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 1)
+	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 15)
 	now := time.Now()
 	wc.CaptureTimes = []time.Time{
 		now.Add(-2 * time.Hour),
@@ -402,7 +402,7 @@ func TestUpdateNextCapture_contextCancelledDuringRetry(t *testing.T) {
 	// Solar client always fails, so every SetCaptureTimes attempt returns an error.
 	solar := &fixedSolarClient{err: errors.New("solar unavailable")}
 
-	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 0)
+	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 15)
 	wc.CaptureTimes = []time.Time{
 		time.Now().Add(-2 * time.Hour),
 		time.Now().Add(-1 * time.Hour),
@@ -461,7 +461,7 @@ func TestUpdateNextCapture_rollsOverToTomorrow(t *testing.T) {
 	tzClient := &fixedTimezoneClient{tz: "America/Los_Angeles"}
 	solar := &fixedSolarClient{times: laFixedSolar()}
 
-	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 0)
+	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 15)
 	wc.CaptureTimes = []time.Time{
 		time.Now().Add(-2 * time.Hour),
 		time.Now().Add(-1 * time.Hour),
@@ -498,7 +498,7 @@ func TestUpdateNextCapture_sortsUnsortedCaptureTimes(t *testing.T) {
 	tzClient := &fixedTimezoneClient{tz: "America/Los_Angeles"}
 	solar := &fixedSolarClient{times: laFixedSolar()}
 
-	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 0)
+	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 15)
 	now := time.Now()
 	// Deliberately reverse order — the sort branch must execute.
 	wc.CaptureTimes = []time.Time{
@@ -561,7 +561,7 @@ func TestCaptureImage_storeWriteError(t *testing.T) {
 	baseDir := t.TempDir()
 	fetcher := &mockImageFetcher{data: []byte("img"), contentType: "image/jpeg"}
 
-	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 0)
+	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 15)
 	wc.CaptureTimes = []time.Time{time.Now()}
 	wc.NextCapture = 0
 
@@ -580,7 +580,7 @@ func TestUpdateNextCapture_retriesOnTransientSolarFailure(t *testing.T) {
 	// Fails once, then succeeds — exercises the retry log path.
 	solar := &failingNTimesSolarClient{n: 1, times: laFixedSolar()}
 
-	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 0)
+	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 15)
 	wc.CaptureTimes = []time.Time{
 		time.Now().Add(-2 * time.Hour),
 		time.Now().Add(-1 * time.Hour),
@@ -620,7 +620,7 @@ func TestCaptureImage_stream(t *testing.T) {
 	store := NewMemStorage()
 	baseDir := t.TempDir()
 
-	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 0)
+	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 15)
 	wc.SourceType = "stream"
 	wc.URL = tmpJPEG
 	wc.CaptureTimes = []time.Time{time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)}

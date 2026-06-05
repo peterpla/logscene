@@ -1,0 +1,33 @@
+{{define "content"}}
+<h5 class="mb-4">Find Your Camera's Coordinates</h5>
+
+<div class="alert alert-info mb-4" role="alert">
+  <strong>Coming soon:</strong> This page will let you search by address or place name and
+  click a map to get precise coordinates. For now, use one of the methods below.
+</div>
+
+<div class="card mb-3">
+  <div class="card-header fw-semibold">Option 1 — Google Maps</div>
+  <div class="card-body">
+    <ol class="mb-0">
+      <li>Open <a href="https://maps.google.com" target="_blank" rel="noopener">Google Maps</a>.</li>
+      <li>Navigate to your camera's location.</li>
+      <li>Right-click (or long-press on mobile) directly on the spot.</li>
+      <li>The coordinates appear at the top of the menu — click them to copy.</li>
+    </ol>
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header fw-semibold">Option 2 — Your IP Camera's Admin Page</div>
+  <div class="card-body">
+    <p class="mb-0">
+      Many IP cameras (Reolink, Foscam, Hikvision) show GPS coordinates in their
+      web interface under <em>Settings → Location</em> or <em>Device Info</em>.
+      Check your camera's admin page first — the coordinates may already be there.
+    </p>
+  </div>
+</div>
+
+<a href="/new" class="btn btn-primary">Back to Add Webcam</a>
+{{end}}

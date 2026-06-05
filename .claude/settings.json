@@ -1,8 +1,16 @@
 {
   "permissions": {
     "allow": [
+      "Bash(go build *)",
       "Bash(go test *)",
-      "Bash(go tool *)"
+      "Bash(go tool *)",
+      "Bash(git *)",
+      "Bash(curl *)",
+      "Bash(sed *)",
+      "Bash(tail *)",
+      "PowerShell(cd \"c:\\\\Users\\\\Peter\\\\Coding\\\\LogScene\"*)",
+      "PowerShell(Get-Process*)",
+      "Read(//c/Users/Peter/**)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Peter\\.claude\\plans"

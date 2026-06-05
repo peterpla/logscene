@@ -13,6 +13,7 @@
     .sidebar .nav-link { color: rgba(255,255,255,.75); }
     .sidebar .nav-link:hover { color: #fff; }
     .sidebar .nav-link.active { color: #fff; background-color: rgba(255,255,255,.15); }
+    .sidebar .nav-link-disabled { color: rgba(255,255,255,.35); cursor: default; padding: .5rem 1rem; display: block; }
   </style>
 </head>
 <body class="d-flex bg-light">
@@ -28,7 +29,11 @@
         <a href="/" class="nav-link{{if eq .Page "dashboard"}} active{{end}}">Dashboard</a>
       </li>
       <li class="nav-item">
+        {{if .Trial.CapturesStopped}}
+        <span class="nav-link-disabled" title="Upgrade to add webcams">Add Webcam</span>
+        {{else}}
         <a href="/new" class="nav-link{{if eq .Page "new-webcam"}} active{{end}}">Add Webcam</a>
+        {{end}}
       </li>
       <li class="nav-item">
         <a href="/logs" class="nav-link{{if eq .Page "logs"}} active{{end}}">Logs</a>
@@ -40,6 +45,22 @@
 
   <!-- Main content area -->
   <main class="flex-grow-1 p-4 overflow-auto">
+    {{if .Trial.IsWarning}}
+    <div class="alert alert-warning alert-dismissible mb-4" role="alert">
+      <strong>Your free trial ends today.</strong> Upgrade to LogScene Pro to keep captures running.
+      <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+    {{else if .Trial.IsGraceRender}}
+    <div class="alert alert-danger mb-4" role="alert">
+      <strong>Captures have stopped.</strong> You have one render remaining — use it before day 38.
+      <a href="#" class="alert-link">Upgrade now</a> to restore full access.
+    </div>
+    {{else if .Trial.IsReadOnly}}
+    <div class="alert alert-danger mb-4" role="alert">
+      <strong>Your trial has ended.</strong>
+      <a href="#" class="alert-link">Upgrade to LogScene Pro</a> to re-enable captures and rendering.
+    </div>
+    {{end}}
     {{block "content" .}}{{end}}
   </main>
 

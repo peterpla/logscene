@@ -30,9 +30,13 @@ func (ts TrialState) String() string {
 }
 
 // capturesStopped returns true when the trial no longer permits new captures.
-func (ts TrialState) capturesStopped() bool {
-	return ts >= TrialGraceRender
-}
+func (ts TrialState) capturesStopped() bool { return ts >= TrialGraceRender }
+
+// Exported methods for use in HTML templates.
+func (ts TrialState) IsWarning() bool       { return ts == TrialWarning }
+func (ts TrialState) IsGraceRender() bool   { return ts == TrialGraceRender }
+func (ts TrialState) IsReadOnly() bool      { return ts == TrialReadOnly }
+func (ts TrialState) CapturesStopped() bool { return ts >= TrialGraceRender }
 
 // computeTrialState derives the current trial state from the install date.
 func computeTrialState(installDate time.Time) TrialState {

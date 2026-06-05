@@ -9,9 +9,9 @@
             "type": "go",
             "request": "launch",
             "mode": "test",
-            "program": "C:\\Users\\peter\\OneDrive\\Coding\\LogScene", // ${fileDirname} doesn't work here
+            "program": "C:\\Users\\peter\\Coding\\LogScene", // ${fileDirname} doesn't work here
             "env": {
-                "LOGSCENE_PATH": "C:\\Users\\peter\\OneDrive\\Coding\\LogScene",
+                "LOGSCENE_PATH": "C:\\Users\\peter\\Coding\\LogScene",
                 "LOGSCENE_POLL": "60",
                 "LOGSCENE_PORT": "8099",
                 "LOGSCENE_TZDB": "YOUR_LOGSCENE_TZDB_KEY_HERE",
@@ -23,9 +23,9 @@
             "type": "go",
             "request": "launch",
             "mode": "auto",
-            "program": "C:\\Users\\peter\\OneDrive\\Coding\\LogScene", // ${fileDirname} doesn't work here
+            "program": "C:\\Users\\peter\\Coding\\LogScene", // ${fileDirname} doesn't work here
             "env": {
-                "LOGSCENE_PATH": "C:\\Users\\peter\\OneDrive\\Coding\\LogScene",
+                "LOGSCENE_PATH": "C:\\Users\\peter\\Coding\\LogScene",
                 "LOGSCENE_POLL": "60",
                 "LOGSCENE_PORT": "8099",
                 "LOGSCENE_TZDB": "YOUR_LOGSCENE_TZDB_KEY_HERE",

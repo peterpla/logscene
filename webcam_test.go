@@ -156,6 +156,7 @@ func validWebcam() *Webcam {
 	wc.Latitude = 34.01
 	wc.Longitude = -118.49
 	wc.Folder = "beach"
+	wc.IntervalMinutes = 15
 	wc.FirstSunrise = true
 	wc.LastSunset = true
 	_ = wc.SetFirstLastFlags()

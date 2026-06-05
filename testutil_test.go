@@ -114,14 +114,14 @@ func (m *mockRenderer) Render(_ context.Context, _, _ string, _ RenderOptions) e
 // ---------------------------------------------------------------------------
 
 // testWebcam returns a Webcam with flags already set for the given first/last options.
-func testWebcam(t *testing.T, firstFlag, lastFlag uint, additional int) *Webcam {
+func testWebcam(t *testing.T, firstFlag, lastFlag uint, intervalMinutes int) *Webcam {
 	t.Helper()
 	wc := newWebcam()
 	wc.Name = "test-cam"
 	wc.URL = "http://example.com/cam.jpg"
 	wc.Latitude = 37.77
 	wc.Longitude = -122.42
-	wc.Additional = additional
+	wc.IntervalMinutes = intervalMinutes
 	wc.Folder = "test-cam"
 
 	wc.FirstFlags = firstFlag

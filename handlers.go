@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -22,14 +23,111 @@ import (
 	"github.com/julienschmidt/httprouter"
 )
 
-// handleHome renders the PoC dashboard.
+// webcamCardData summarises one webcam for display on the dashboard.
+type webcamCardData struct {
+	Name          string
+	Folder        string
+	SourceType    string
+	StatusLabel   string
+	StatusClass   string // Bootstrap bg-* colour token
+	NextCapture   string // formatted time or short status string
+	CapturesToday int
+}
+
+// dashboardData is the template context for the dashboard page.
+type dashboardData struct {
+	Page    string
+	Title   string
+	Trial   TrialState
+	Webcams []webcamCardData
+}
+
+// newWebcamData is the template context for the add-webcam form.
+type newWebcamData struct {
+	Page  string
+	Title string
+	Trial TrialState
+}
+
+// webcamCard builds display data from a live Webcam, holding its read lock.
+func webcamCard(wc *Webcam) webcamCardData {
+	wc.mu.RLock()
+	defer wc.mu.RUnlock()
+
+	d := webcamCardData{
+		Name:       wc.Name,
+		Folder:     wc.Folder,
+		SourceType: wc.SourceType,
+	}
+	if d.SourceType == "" {
+		d.SourceType = "url"
+	}
+
+	switch {
+	case wc.Disabled:
+		d.StatusLabel, d.StatusClass = "Disabled", "secondary"
+	case !wc.FirstFailure.IsZero():
+		d.StatusLabel, d.StatusClass = "Error", "warning"
+	default:
+		d.StatusLabel, d.StatusClass = "Active", "success"
+	}
+
+	d.CapturesToday = wc.NextCapture
+	switch {
+	case wc.NextCapture < len(wc.CaptureTimes):
+		next := wc.CaptureTimes[wc.NextCapture]
+		if wc.WebcamLoc != nil {
+			d.NextCapture = next.In(wc.WebcamLoc).Format("3:04 PM")
+		} else {
+			d.NextCapture = next.UTC().Format("15:04 UTC")
+		}
+	case len(wc.CaptureTimes) > 0:
+		d.NextCapture = "Done for today"
+	default:
+		d.NextCapture = "Pending"
+	}
+
+	return d
+}
+
+// handleHome renders the live dashboard.
 func (s *server) handleHome() httprouter.Handle {
 	return func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
-		data := struct {
-			Page  string
-			Title string
-		}{"dashboard", "Dashboard"}
-		if err := s.tmpl.ExecuteTemplate(w, "base", data); err != nil {
+		s.mu.RLock()
+		cards := make([]webcamCardData, 0, len(*s.webcams))
+		for _, wc := range *s.webcams {
+			cards = append(cards, webcamCard(wc))
+		}
+		trial := s.trial
+		s.mu.RUnlock()
+
+		data := dashboardData{
+			Page:    "dashboard",
+			Title:   "Dashboard",
+			Trial:   trial,
+			Webcams: cards,
+		}
+		if err := s.tmplDashboard.ExecuteTemplate(w, "base", data); err != nil {
+			log.Printf("handleHome: %v", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}
+}
+
+// handleGetNew renders the add-webcam form.
+func (s *server) handleGetNew() httprouter.Handle {
+	return func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+		s.mu.RLock()
+		trial := s.trial
+		s.mu.RUnlock()
+
+		data := newWebcamData{
+			Page:  "new-webcam",
+			Title: "Add Webcam",
+			Trial: trial,
+		}
+		if err := s.tmplNewWebcam.ExecuteTemplate(w, "base", data); err != nil {
+			log.Printf("handleGetNew: %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	}
@@ -61,27 +159,43 @@ func (s *server) handleNew() httprouter.Handle {
 			http.Error(w, "invalid longitude", http.StatusBadRequest)
 			return
 		}
-		if wc.Additional, err = strconv.Atoi(r.FormValue("additional")); err != nil {
-			http.Error(w, "invalid additional", http.StatusBadRequest)
-			return
-		}
-		// 47 additional + 2 endpoints (first/last) = 49 shots across a ~12-hour day,
-		// one every ~15 minutes — the finest interval that makes practical sense for
-		// a landscape timelapse.
-		if wc.Additional < 0 || wc.Additional > 47 {
-			http.Error(w, "additional must be 0–47", http.StatusBadRequest)
+		if wc.IntervalMinutes, err = strconv.Atoi(r.FormValue("intervalMinutes")); err != nil {
+			http.Error(w, "invalid interval", http.StatusBadRequest)
 			return
 		}
 
-		// Checkboxes are only present in the form when checked.
-		wc.FirstSunrise = r.FormValue("firstSunrise") != ""
-		wc.FirstSunrise30 = r.FormValue("firstSunrise30") != ""
-		wc.FirstSunrise60 = r.FormValue("firstSunrise60") != ""
-		wc.FirstTime = r.FormValue("firstTime") != ""
-		wc.LastSunset = r.FormValue("lastSunset") != ""
-		wc.LastSunset30 = r.FormValue("lastSunset30") != ""
-		wc.LastSunset60 = r.FormValue("lastSunset60") != ""
-		wc.LastTime = r.FormValue("lastTime") != ""
+		// Support radio-button format (firstOption/lastOption) from the UI form,
+		// and fall back to individual named fields for backward compatibility.
+		switch r.FormValue("firstOption") {
+		case "firstSunrise":
+			wc.FirstSunrise = true
+		case "firstSunrise30":
+			wc.FirstSunrise30 = true
+		case "firstSunrise60":
+			wc.FirstSunrise60 = true
+		case "firstTime":
+			wc.FirstTime = true
+		default:
+			wc.FirstSunrise = r.FormValue("firstSunrise") != ""
+			wc.FirstSunrise30 = r.FormValue("firstSunrise30") != ""
+			wc.FirstSunrise60 = r.FormValue("firstSunrise60") != ""
+			wc.FirstTime = r.FormValue("firstTime") != ""
+		}
+		switch r.FormValue("lastOption") {
+		case "lastSunset":
+			wc.LastSunset = true
+		case "lastSunset30":
+			wc.LastSunset30 = true
+		case "lastSunset60":
+			wc.LastSunset60 = true
+		case "lastTime":
+			wc.LastTime = true
+		default:
+			wc.LastSunset = r.FormValue("lastSunset") != ""
+			wc.LastSunset30 = r.FormValue("lastSunset30") != ""
+			wc.LastSunset60 = r.FormValue("lastSunset60") != ""
+			wc.LastTime = r.FormValue("lastTime") != ""
+		}
 
 		if err := s.validate.Struct(wc); err != nil {
 			log.Printf("handleNew: validate: %v", err)
@@ -418,12 +532,102 @@ func parseDirectShowVideoDevices(out []byte) []string {
 	return devices
 }
 
-// initTemplates parses the embedded HTML templates into s.tmpl.
-func (s *server) initTemplates() error {
-	tmpl, err := template.ParseFS(templateFS, "templates/*.html")
-	if err != nil {
-		return fmt.Errorf("initTemplates: %w", err)
+// handleProbe fetches one image from a URL-source camera and returns its size.
+// Only url source type is supported; usb and stream require server-side hardware
+// access that is deferred to a later implementation phase.
+func (s *server) handleProbe() httprouter.Handle {
+	return func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+		var req struct {
+			URL        string `json:"url"`
+			SourceType string `json:"sourceType"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		type probeResp struct {
+			Bytes int64  `json:"bytes,omitempty"`
+			Error string `json:"error,omitempty"`
+		}
+		respond := func(v probeResp) {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(v)
+		}
+
+		if req.SourceType != "url" {
+			respond(probeResp{Error: "test shot is only supported for Remote Camera (URL) sources"})
+			return
+		}
+		if !strings.HasPrefix(req.URL, "http://") && !strings.HasPrefix(req.URL, "https://") {
+			respond(probeResp{Error: "URL must start with http:// or https://"})
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, req.URL, nil)
+		if err != nil {
+			respond(probeResp{Error: "invalid URL: " + err.Error()})
+			return
+		}
+		resp, err := http.DefaultClient.Do(httpReq)
+		if err != nil {
+			respond(probeResp{Error: "could not reach camera — check the URL and try again"})
+			return
+		}
+		defer resp.Body.Close()
+
+		const maxBytes = 10 << 20 // 10 MB guard
+		body, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes))
+		if err != nil {
+			respond(probeResp{Error: "error reading camera response"})
+			return
+		}
+		respond(probeResp{Bytes: int64(len(body))})
 	}
-	s.tmpl = tmpl
+}
+
+// handleGetLatlong renders the Find Coordinates stub page.
+func (s *server) handleGetLatlong() httprouter.Handle {
+	return func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+		data := struct {
+			Page  string
+			Title string
+			Trial TrialState
+		}{"", "Find Coordinates", s.trial}
+		if err := s.tmplLatlong.ExecuteTemplate(w, "base", data); err != nil {
+			log.Printf("handleGetLatlong: %v", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}
+}
+
+// initTemplates parses the embedded HTML templates into per-page template sets.
+// Each page gets its own clone of base.html so their "content" blocks don't
+// conflict with each other.
+func (s *server) initTemplates() error {
+	base, err := template.ParseFS(templateFS, "templates/base.html")
+	if err != nil {
+		return fmt.Errorf("initTemplates: parse base: %w", err)
+	}
+	parse := func(name string) (*template.Template, error) {
+		t, err := template.Must(base.Clone()).ParseFS(templateFS, "templates/"+name+".html")
+		if err != nil {
+			return nil, fmt.Errorf("initTemplates: parse %s: %w", name, err)
+		}
+		return t, nil
+	}
+
+	if s.tmplDashboard, err = parse("dashboard"); err != nil {
+		return err
+	}
+	if s.tmplNewWebcam, err = parse("new_webcam"); err != nil {
+		return err
+	}
+	if s.tmplLatlong, err = parse("latlong"); err != nil {
+		return err
+	}
 	return nil
 }

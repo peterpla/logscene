@@ -244,7 +244,7 @@ func TestHandleNew_invalidLatitude(t *testing.T) {
 	form.Set("webcamUrl", "http://example.com/cam.jpg")
 	form.Set("latitude", "notanumber")
 	form.Set("longitude", "-122.42")
-	form.Set("additional", "0")
+	form.Set("intervalMinutes", "15")
 	form.Set("folder", "test-cam")
 	form.Set("firstSunrise", "on")
 	form.Set("lastSunset", "on")
@@ -268,7 +268,7 @@ func TestHandleNew_invalidLongitude(t *testing.T) {
 	form.Set("webcamUrl", "http://example.com/cam.jpg")
 	form.Set("latitude", "37.77")
 	form.Set("longitude", "notanumber")
-	form.Set("additional", "0")
+	form.Set("intervalMinutes", "15")
 	form.Set("folder", "test-cam")
 	form.Set("firstSunrise", "on")
 	form.Set("lastSunset", "on")
@@ -283,7 +283,7 @@ func TestHandleNew_invalidLongitude(t *testing.T) {
 	}
 }
 
-func TestHandleNew_additionalNonNumeric(t *testing.T) {
+func TestHandleNew_intervalNonNumeric(t *testing.T) {
 	srv := newTestServer(t)
 	srv.router.POST("/new", srv.handleNew())
 
@@ -292,7 +292,7 @@ func TestHandleNew_additionalNonNumeric(t *testing.T) {
 	form.Set("webcamUrl", "http://example.com/cam.jpg")
 	form.Set("latitude", "37.77")
 	form.Set("longitude", "-122.42")
-	form.Set("additional", "abc") // not an integer → strconv.Atoi error
+	form.Set("intervalMinutes", "abc") // not an integer
 	form.Set("folder", "test-cam")
 	form.Set("firstSunrise", "on")
 	form.Set("lastSunset", "on")
@@ -303,11 +303,11 @@ func TestHandleNew_additionalNonNumeric(t *testing.T) {
 	srv.router.ServeHTTP(w, req)
 
 	if w.Code != http.StatusBadRequest {
-		t.Errorf("non-numeric additional: want 400, got %d", w.Code)
+		t.Errorf("non-numeric interval: want 400, got %d", w.Code)
 	}
 }
 
-func TestHandleNew_additionalOutOfRange(t *testing.T) {
+func TestHandleNew_intervalZero(t *testing.T) {
 	srv := newTestServer(t)
 	srv.router.POST("/new", srv.handleNew())
 
@@ -316,7 +316,7 @@ func TestHandleNew_additionalOutOfRange(t *testing.T) {
 	form.Set("webcamUrl", "http://example.com/cam.jpg")
 	form.Set("latitude", "37.77")
 	form.Set("longitude", "-122.42")
-	form.Set("additional", "-1") // valid int, but < 0 → range check fails
+	form.Set("intervalMinutes", "0") // fails min=1 validation
 	form.Set("folder", "test-cam")
 	form.Set("firstSunrise", "on")
 	form.Set("lastSunset", "on")
@@ -327,7 +327,7 @@ func TestHandleNew_additionalOutOfRange(t *testing.T) {
 	srv.router.ServeHTTP(w, req)
 
 	if w.Code != http.StatusBadRequest {
-		t.Errorf("additional out of range: want 400, got %d", w.Code)
+		t.Errorf("interval=0: want 400, got %d", w.Code)
 	}
 }
 
@@ -342,7 +342,7 @@ func TestHandleNew_missingName(t *testing.T) {
 	form.Set("webcamUrl", "http://example.com/cam.jpg")
 	form.Set("latitude", "37.77")
 	form.Set("longitude", "-122.42")
-	form.Set("additional", "0")
+	form.Set("intervalMinutes", "15")
 	form.Set("folder", "test-cam")
 	form.Set("firstSunrise", "on")
 	form.Set("lastSunset", "on")
@@ -357,54 +357,6 @@ func TestHandleNew_missingName(t *testing.T) {
 	}
 }
 
-func TestHandleNew_invalidAdditional(t *testing.T) {
-	srv := newTestServer(t)
-	srv.router.POST("/new", srv.handleNew())
-
-	form := url.Values{}
-	form.Set("name", "Test Cam")
-	form.Set("webcamUrl", "http://example.com/cam.jpg")
-	form.Set("latitude", "37.77")
-	form.Set("longitude", "-122.42")
-	form.Set("additional", "48") // valid int, but > 47 → range check fails
-	form.Set("folder", "test-cam")
-	form.Set("firstSunrise", "on")
-	form.Set("lastSunset", "on")
-
-	req := httptest.NewRequest(http.MethodPost, "/new", strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	w := httptest.NewRecorder()
-	srv.router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("invalid additional: want 400, got %d", w.Code)
-	}
-}
-
-func TestHandleNew_additionalAtMax(t *testing.T) {
-	srv := newTestServer(t)
-	srv.router.POST("/new", srv.handleNew())
-
-	form := url.Values{}
-	form.Set("name", "Test Cam")
-	form.Set("webcamUrl", "http://example.com/cam.jpg")
-	form.Set("latitude", "37.77")
-	form.Set("longitude", "-122.42")
-	form.Set("additional", "47") // maximum allowed value
-	form.Set("folder", "test-cam")
-	form.Set("firstSunrise", "on")
-	form.Set("lastSunset", "on")
-
-	req := httptest.NewRequest(http.MethodPost, "/new", strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	w := httptest.NewRecorder()
-	srv.router.ServeHTTP(w, req)
-
-	if w.Code == http.StatusBadRequest {
-		t.Errorf("additional=47 should be valid, got 400: %s", w.Body.String())
-	}
-}
-
 // ---------------------------------------------------------------------------
 // GET /
 // ---------------------------------------------------------------------------
@@ -416,6 +368,13 @@ func TestHandleHome(t *testing.T) {
 	}
 	srv.router.GET("/", srv.handleHome())
 
+	// Add a webcam so the dashboard has a card to render.
+	wc := newWebcam()
+	wc.Name = "Test Camera"
+	srv.mu.Lock()
+	srv.webcams.Append(wc)
+	srv.mu.Unlock()
+
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
 	srv.router.ServeHTTP(w, req)
@@ -425,8 +384,8 @@ func TestHandleHome(t *testing.T) {
 	}
 	body := w.Body.String()
 
-	// Card content
-	for _, want := range []string{"Front Yard", "Active", "Render"} {
+	// Webcam name and Render button appear on the dashboard.
+	for _, want := range []string{"Test Camera", "Render"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing %q", want)
 		}
@@ -518,7 +477,7 @@ func TestHandleNew_success(t *testing.T) {
 	form.Set("webcamUrl", "http://example.com/cam.jpg")
 	form.Set("latitude", "37.77")
 	form.Set("longitude", "-122.42")
-	form.Set("additional", "0")
+	form.Set("intervalMinutes", "15")
 	form.Set("folder", "test-cam")
 	form.Set("firstSunrise", "on")
 	form.Set("lastSunset", "on")
@@ -549,7 +508,7 @@ func TestHandleNew_usbMissingDeviceName(t *testing.T) {
 	// deviceName intentionally omitted
 	form.Set("latitude", "37.77")
 	form.Set("longitude", "-122.42")
-	form.Set("additional", "0")
+	form.Set("intervalMinutes", "15")
 	form.Set("folder", "usb-cam")
 	form.Set("firstSunrise", "on")
 	form.Set("lastSunset", "on")
@@ -574,7 +533,7 @@ func TestHandleNew_folderTraversal(t *testing.T) {
 		form.Set("webcamUrl", "http://example.com/cam.jpg")
 		form.Set("latitude", "37.77")
 		form.Set("longitude", "-122.42")
-		form.Set("additional", "0")
+		form.Set("intervalMinutes", "15")
 		form.Set("folder", folder)
 		form.Set("firstSunrise", "on")
 		form.Set("lastSunset", "on")
@@ -767,7 +726,7 @@ func TestHandleNew_trialCapturesStopped(t *testing.T) {
 	form.Set("webcamUrl", "http://example.com/cam.jpg")
 	form.Set("latitude", "37.77")
 	form.Set("longitude", "-122.42")
-	form.Set("additional", "0")
+	form.Set("intervalMinutes", "15")
 	form.Set("folder", "test-cam")
 	form.Set("firstSunrise", "on")
 	form.Set("lastSunset", "on")
@@ -795,7 +754,7 @@ func TestHandleNew_trialSecondWebcamBlocked(t *testing.T) {
 	form.Set("webcamUrl", "http://example.com/cam.jpg")
 	form.Set("latitude", "37.77")
 	form.Set("longitude", "-122.42")
-	form.Set("additional", "0")
+	form.Set("intervalMinutes", "15")
 	form.Set("folder", "second-cam")
 	form.Set("firstSunrise", "on")
 	form.Set("lastSunset", "on")
@@ -907,7 +866,7 @@ func TestHandleNew_urlSourceMissingURL(t *testing.T) {
 	// sourceType defaults to "url" when omitted; webcamUrl intentionally absent.
 	form.Set("latitude", "37.77")
 	form.Set("longitude", "-122.42")
-	form.Set("additional", "0")
+	form.Set("intervalMinutes", "15")
 	form.Set("folder", "test-cam")
 	form.Set("firstSunrise", "on")
 	form.Set("lastSunset", "on")
@@ -931,7 +890,7 @@ func TestHandleNew_unknownSourceType(t *testing.T) {
 	form.Set("sourceType", "bogus")
 	form.Set("latitude", "37.77")
 	form.Set("longitude", "-122.42")
-	form.Set("additional", "0")
+	form.Set("intervalMinutes", "15")
 	form.Set("folder", "test-cam")
 	form.Set("firstSunrise", "on")
 	form.Set("lastSunset", "on")
@@ -960,7 +919,7 @@ func TestHandleNew_localStorageMkdir(t *testing.T) {
 	form.Set("webcamUrl", "http://example.com/cam.jpg")
 	form.Set("latitude", "37.77")
 	form.Set("longitude", "-122.42")
-	form.Set("additional", "0")
+	form.Set("intervalMinutes", "15")
 	form.Set("folder", "local-cam")
 	form.Set("firstSunrise", "on")
 	form.Set("lastSunset", "on")
@@ -991,7 +950,7 @@ func TestHandleNew_multipleFirstFlags(t *testing.T) {
 	form.Set("webcamUrl", "http://example.com/cam.jpg")
 	form.Set("latitude", "37.77")
 	form.Set("longitude", "-122.42")
-	form.Set("additional", "0")
+	form.Set("intervalMinutes", "15")
 	form.Set("folder", "test-cam")
 	form.Set("firstSunrise", "on")
 	form.Set("firstSunrise30", "on") // two first flags — invalid
@@ -1005,4 +964,274 @@ func TestHandleNew_multipleFirstFlags(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("multiple first flags: want 400, got %d", w.Code)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// HTML test helpers
+// ---------------------------------------------------------------------------
+
+// assertHTML fails the test if fragment is absent from body.
+func assertHTML(t *testing.T, body, fragment string) {
+	t.Helper()
+	if !strings.Contains(body, fragment) {
+		t.Errorf("body missing HTML:\n  %s", fragment)
+	}
+}
+
+// assertNoHTML fails the test if fragment is present in body.
+func assertNoHTML(t *testing.T, body, fragment string) {
+	t.Helper()
+	if strings.Contains(body, fragment) {
+		t.Errorf("body should not contain HTML:\n  %s", fragment)
+	}
+}
+
+// getBody is a convenience helper that executes a GET against the router and
+// returns the response code and body string.
+func getBody(t *testing.T, srv *server, path string) (int, string) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+	return w.Code, w.Body.String()
+}
+
+// ---------------------------------------------------------------------------
+// GET /new — UI tests
+// ---------------------------------------------------------------------------
+
+func TestHandleGetNew_activeForm(t *testing.T) {
+	srv := newTestServer(t)
+	if err := srv.initTemplates(); err != nil {
+		t.Fatalf("initTemplates: %v", err)
+	}
+	srv.router.GET("/new", srv.handleGetNew())
+
+	code, body := getBody(t, srv, "/new")
+	if code != http.StatusOK {
+		t.Fatalf("want 200, got %d", code)
+	}
+	assertHTML(t, body, `<form`)
+	assertHTML(t, body, `Remote Camera`)
+	assertHTML(t, body, `USB Webcam`)
+	assertHTML(t, body, `IP Camera`)
+	assertHTML(t, body, `Friendly Name`)
+	assertHTML(t, body, `Find Coordinates`)
+	assertHTML(t, body, `name="intervalMinutes"`)
+	assertHTML(t, body, `Test shot`)
+	assertHTML(t, body, `class="nav-link active">Add Webcam`)
+	assertNoHTML(t, body, `class="alert alert-danger"`)
+}
+
+func TestHandleGetNew_capturesStopped(t *testing.T) {
+	srv := newTestServer(t)
+	srv.trial = TrialGraceRender
+	if err := srv.initTemplates(); err != nil {
+		t.Fatalf("initTemplates: %v", err)
+	}
+	srv.router.GET("/new", srv.handleGetNew())
+
+	_, body := getBody(t, srv, "/new")
+	assertNoHTML(t, body, `<form`)
+	assertHTML(t, body, `Upgrade to LogScene Pro`)
+	assertHTML(t, body, `nav-link-disabled`)
+}
+
+func TestHandleGetNew_trialWarning(t *testing.T) {
+	srv := newTestServer(t)
+	srv.trial = TrialWarning
+	if err := srv.initTemplates(); err != nil {
+		t.Fatalf("initTemplates: %v", err)
+	}
+	srv.router.GET("/new", srv.handleGetNew())
+
+	_, body := getBody(t, srv, "/new")
+	assertHTML(t, body, `alert-warning`)
+	assertHTML(t, body, `<form`) // form still shown during warning
+}
+
+func TestHandleGetNew_navLinkActive(t *testing.T) {
+	srv := newTestServer(t)
+	if err := srv.initTemplates(); err != nil {
+		t.Fatalf("initTemplates: %v", err)
+	}
+	srv.router.GET("/new", srv.handleGetNew())
+
+	_, body := getBody(t, srv, "/new")
+	assertHTML(t, body, `class="nav-link active">Add Webcam`)
+	assertNoHTML(t, body, `class="nav-link active">Dashboard`)
+}
+
+// ---------------------------------------------------------------------------
+// GET / — dashboard UI tests
+// ---------------------------------------------------------------------------
+
+func TestHandleHome_emptyState(t *testing.T) {
+	srv := newTestServer(t)
+	if err := srv.initTemplates(); err != nil {
+		t.Fatalf("initTemplates: %v", err)
+	}
+	srv.router.GET("/", srv.handleHome())
+
+	_, body := getBody(t, srv, "/")
+	assertHTML(t, body, `No webcams configured`)
+	assertHTML(t, body, `Add your first webcam`)
+	assertNoHTML(t, body, `card-title`)
+}
+
+func TestHandleHome_webcamCard_active(t *testing.T) {
+	srv := newTestServer(t)
+	if err := srv.initTemplates(); err != nil {
+		t.Fatalf("initTemplates: %v", err)
+	}
+	srv.router.GET("/", srv.handleHome())
+
+	wc := newWebcam()
+	wc.Name = "Glacier View"
+	wc.Folder = "glacier"
+	srv.mu.Lock()
+	srv.webcams.Append(wc)
+	srv.mu.Unlock()
+
+	_, body := getBody(t, srv, "/")
+	assertHTML(t, body, `Glacier View`)
+	assertHTML(t, body, `bg-success`)
+	assertHTML(t, body, `Active`)
+	assertHTML(t, body, `glacier`)
+	assertHTML(t, body, `Render`)
+}
+
+func TestHandleHome_webcamCard_disabled(t *testing.T) {
+	srv := newTestServer(t)
+	if err := srv.initTemplates(); err != nil {
+		t.Fatalf("initTemplates: %v", err)
+	}
+	srv.router.GET("/", srv.handleHome())
+
+	wc := newWebcam()
+	wc.Name = "Offline Cam"
+	wc.Disabled = true
+	srv.mu.Lock()
+	srv.webcams.Append(wc)
+	srv.mu.Unlock()
+
+	_, body := getBody(t, srv, "/")
+	assertHTML(t, body, `bg-secondary`)
+	assertHTML(t, body, `Disabled`)
+}
+
+func TestHandleHome_webcamCard_error(t *testing.T) {
+	srv := newTestServer(t)
+	if err := srv.initTemplates(); err != nil {
+		t.Fatalf("initTemplates: %v", err)
+	}
+	srv.router.GET("/", srv.handleHome())
+
+	wc := newWebcam()
+	wc.Name = "Flaky Cam"
+	wc.FirstFailure = time.Now().Add(-10 * time.Minute)
+	srv.mu.Lock()
+	srv.webcams.Append(wc)
+	srv.mu.Unlock()
+
+	_, body := getBody(t, srv, "/")
+	assertHTML(t, body, `bg-warning`)
+	assertHTML(t, body, `Error`)
+}
+
+func TestHandleHome_renderButton_noCaptures(t *testing.T) {
+	srv := newTestServer(t)
+	if err := srv.initTemplates(); err != nil {
+		t.Fatalf("initTemplates: %v", err)
+	}
+	srv.router.GET("/", srv.handleHome())
+
+	wc := newWebcam()
+	wc.Name = "New Cam"
+	// NextCapture=0, CaptureTimes empty → CapturesToday=0
+	srv.mu.Lock()
+	srv.webcams.Append(wc)
+	srv.mu.Unlock()
+
+	_, body := getBody(t, srv, "/")
+	assertHTML(t, body, `disabled title="No captures yet today"`)
+	assertNoHTML(t, body, `btn-outline-primary"`)
+}
+
+func TestHandleHome_renderButton_withCaptures(t *testing.T) {
+	srv := newTestServer(t)
+	if err := srv.initTemplates(); err != nil {
+		t.Fatalf("initTemplates: %v", err)
+	}
+	srv.router.GET("/", srv.handleHome())
+
+	wc := newWebcam()
+	wc.Name = "Active Cam"
+	wc.CaptureTimes = []time.Time{
+		time.Now().Add(-2 * time.Hour),
+		time.Now().Add(-1 * time.Hour),
+		time.Now().Add(time.Hour),
+	}
+	wc.NextCapture = 2 // 2 captures already done
+	srv.mu.Lock()
+	srv.webcams.Append(wc)
+	srv.mu.Unlock()
+
+	_, body := getBody(t, srv, "/")
+	assertHTML(t, body, `btn-outline-primary`)
+	assertNoHTML(t, body, `disabled title="No captures yet today"`)
+}
+
+func TestHandleHome_trialWarning(t *testing.T) {
+	srv := newTestServer(t)
+	srv.trial = TrialWarning
+	if err := srv.initTemplates(); err != nil {
+		t.Fatalf("initTemplates: %v", err)
+	}
+	srv.router.GET("/", srv.handleHome())
+
+	_, body := getBody(t, srv, "/")
+	assertHTML(t, body, `alert-warning`)
+	assertHTML(t, body, `free trial ends today`)
+	assertNoHTML(t, body, `alert-danger`)
+}
+
+func TestHandleHome_trialGraceRender(t *testing.T) {
+	srv := newTestServer(t)
+	srv.trial = TrialGraceRender
+	if err := srv.initTemplates(); err != nil {
+		t.Fatalf("initTemplates: %v", err)
+	}
+	srv.router.GET("/", srv.handleHome())
+
+	_, body := getBody(t, srv, "/")
+	assertHTML(t, body, `Captures have stopped`)
+	assertHTML(t, body, `nav-link-disabled`)
+	assertHTML(t, body, `disabled title="Upgrade to add webcams"`)
+}
+
+func TestHandleHome_trialReadOnly(t *testing.T) {
+	srv := newTestServer(t)
+	srv.trial = TrialReadOnly
+	if err := srv.initTemplates(); err != nil {
+		t.Fatalf("initTemplates: %v", err)
+	}
+	srv.router.GET("/", srv.handleHome())
+
+	wc := newWebcam()
+	wc.Name = "Old Cam"
+	wc.NextCapture = 3
+	wc.CaptureTimes = []time.Time{
+		time.Now().Add(-3 * time.Hour),
+		time.Now().Add(-2 * time.Hour),
+		time.Now().Add(-1 * time.Hour),
+		time.Now().Add(time.Hour),
+	}
+	srv.mu.Lock()
+	srv.webcams.Append(wc)
+	srv.mu.Unlock()
+
+	_, body := getBody(t, srv, "/")
+	assertHTML(t, body, `trial has ended`)
+	assertHTML(t, body, `disabled title="Upgrade to render"`)
 }

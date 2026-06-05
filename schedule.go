@@ -14,7 +14,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -100,7 +99,7 @@ func (wc *Webcam) SetCaptureTimes(
 		return err
 	}
 
-	wc.CaptureTimes = buildSchedule(first, last, solar.SolarNoon, wc.Additional)
+	wc.CaptureTimes = buildSchedule(first, last, wc.IntervalMinutes)
 
 	log.Printf("SetCaptureTimes: %q tz=%s captures(%d)=%v",
 		wc.Name, tz, len(wc.CaptureTimes), wc.CaptureTimes)
@@ -158,56 +157,17 @@ func parseTimeOfDay(hhMM string, webcamNow time.Time, loc *time.Location) (time.
 	return t.UTC(), nil
 }
 
-// buildSchedule returns the full ordered capture schedule given the first capture,
-// last capture, solar noon, and number of additional (intermediate) captures.
-//
-// Distribution rules:
-//
-//	additional == 0 → [first, last]
-//	additional == 1 → [first, solarNoon, last]
-//	additional even → first + additional evenly-spaced times + last (no forced noon)
-//	additional odd  → first + (n-1)/2 times + solarNoon + (n-1)/2 times + last
-func buildSchedule(first, last, solarNoon time.Time, additional int) []time.Time {
+// buildSchedule returns the full ordered capture schedule.
+// It starts at first, steps forward by intervalMinutes until reaching or
+// passing last, then appends last as the final entry.
+func buildSchedule(first, last time.Time, intervalMinutes int) []time.Time {
 	times := []time.Time{first}
-
-	switch {
-	case additional == 0:
-		// nothing between first and last
-
-	case additional == 1:
-		times = append(times, solarNoon.Truncate(time.Second))
-
-	case additional%2 == 0:
-		times = append(times, splitTimes(first, last, additional)...)
-
-	default: // odd, >= 3
-		half := (additional - 1) / 2
-		times = append(times, splitTimes(first, solarNoon, half)...)
-		times = append(times, solarNoon.Truncate(time.Second))
-		times = append(times, splitTimes(solarNoon, last, half)...)
+	step := time.Duration(intervalMinutes) * time.Minute
+	for t := first.Add(step); t.Before(last); t = t.Add(step) {
+		times = append(times, t)
 	}
-
-	times = append(times, last)
-
-	sort.Slice(times, func(i, j int) bool { return times[i].Before(times[j]) })
+	if !last.Equal(first) {
+		times = append(times, last)
+	}
 	return times
-}
-
-// splitTimes returns n evenly-spaced times strictly between first and last.
-// Times are truncated to whole seconds.
-func splitTimes(first, last time.Time, n int) []time.Time {
-	if n <= 0 {
-		return nil
-	}
-	totalSecs := last.Unix() - first.Unix()
-	interval := totalSecs / int64(n+1)
-
-	result := make([]time.Time, n)
-	base := first
-	for i := 0; i < n; i++ {
-		next := base.Add(time.Duration(interval) * time.Second).Truncate(time.Second)
-		result[i] = next
-		base = next
-	}
-	return result
 }

@@ -20,109 +20,60 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// splitTimes
-// ---------------------------------------------------------------------------
-
-func TestSplitTimes_zero(t *testing.T) {
-	result := splitTimes(time.Unix(0, 0), time.Unix(3600, 0), 0)
-	if len(result) != 0 {
-		t.Errorf("want 0 results, got %d", len(result))
-	}
-}
-
-func TestSplitTimes_one(t *testing.T) {
-	first := time.Unix(0, 0)
-	last := time.Unix(3600, 0)
-	result := splitTimes(first, last, 1)
-	if len(result) != 1 {
-		t.Fatalf("want 1, got %d", len(result))
-	}
-	mid := time.Unix(1800, 0)
-	if !result[0].Equal(mid) {
-		t.Errorf("want %v, got %v", mid, result[0])
-	}
-}
-
-func TestSplitTimes_three(t *testing.T) {
-	first := time.Unix(0, 0)
-	last := time.Unix(4000, 0)
-	result := splitTimes(first, last, 3)
-	if len(result) != 3 {
-		t.Fatalf("want 3, got %d", len(result))
-	}
-	for i := 1; i < len(result); i++ {
-		if !result[i].After(result[i-1]) {
-			t.Errorf("result[%d]=%v not after result[%d]=%v", i, result[i], i-1, result[i-1])
-		}
-	}
-	for i, r := range result {
-		if !r.After(first) || !r.Before(last) {
-			t.Errorf("result[%d]=%v not strictly between %v and %v", i, r, first, last)
-		}
-	}
-}
-
-// ---------------------------------------------------------------------------
 // buildSchedule
 // ---------------------------------------------------------------------------
 
-func TestBuildSchedule_additional0(t *testing.T) {
+func TestBuildSchedule_anchors(t *testing.T) {
 	solar := laFixedSolar()
-	schedule := buildSchedule(solar.Sunrise, solar.Sunset, solar.SolarNoon, 0)
-	if len(schedule) != 2 {
-		t.Fatalf("want 2 captures, got %d", len(schedule))
+	schedule := buildSchedule(solar.Sunrise, solar.Sunset, 60)
+	if len(schedule) < 2 {
+		t.Fatalf("want at least 2 captures, got %d", len(schedule))
 	}
 	if !schedule[0].Equal(solar.Sunrise) {
 		t.Errorf("first: want %v, got %v", solar.Sunrise, schedule[0])
 	}
-	if !schedule[1].Equal(solar.Sunset) {
-		t.Errorf("last: want %v, got %v", solar.Sunset, schedule[1])
+	if !schedule[len(schedule)-1].Equal(solar.Sunset) {
+		t.Errorf("last: want %v, got %v", solar.Sunset, schedule[len(schedule)-1])
 	}
 }
 
-func TestBuildSchedule_additional1(t *testing.T) {
-	solar := laFixedSolar()
-	schedule := buildSchedule(solar.Sunrise, solar.Sunset, solar.SolarNoon, 1)
+func TestBuildSchedule_intervalSpacing(t *testing.T) {
+	// 60-minute interval over a 4-hour span → first, +60, +120, +180, last(+240)
+	first := time.Unix(0, 0)
+	last := first.Add(4 * time.Hour)
+	schedule := buildSchedule(first, last, 60)
+	if len(schedule) != 5 {
+		t.Fatalf("want 5 captures, got %d: %v", len(schedule), schedule)
+	}
+	for i := 1; i < len(schedule)-1; i++ {
+		gap := schedule[i].Sub(schedule[i-1])
+		if gap != time.Hour {
+			t.Errorf("gap[%d]=%v, want 1h", i, gap)
+		}
+	}
+	assertSorted(t, schedule)
+}
+
+func TestBuildSchedule_unevenSpan(t *testing.T) {
+	// 60-minute interval over a 90-minute span → first, +60, last(+90)
+	first := time.Unix(0, 0)
+	last := first.Add(90 * time.Minute)
+	schedule := buildSchedule(first, last, 60)
 	if len(schedule) != 3 {
 		t.Fatalf("want 3 captures, got %d: %v", len(schedule), schedule)
 	}
-	wantNoon := solar.SolarNoon.Truncate(time.Second)
-	if !schedule[1].Equal(wantNoon) {
-		t.Errorf("middle: want noon %v, got %v", wantNoon, schedule[1])
+	if !schedule[0].Equal(first) || !schedule[2].Equal(last) {
+		t.Errorf("anchors wrong: %v", schedule)
 	}
 }
 
-func TestBuildSchedule_additionalEven(t *testing.T) {
-	solar := laFixedSolar()
-	for _, n := range []int{2, 4, 6} {
-		schedule := buildSchedule(solar.Sunrise, solar.Sunset, solar.SolarNoon, n)
-		want := n + 2
-		if len(schedule) != want {
-			t.Errorf("additional=%d: want %d captures, got %d", n, want, len(schedule))
-		}
-		assertSorted(t, schedule)
-	}
-}
-
-func TestBuildSchedule_additionalOdd(t *testing.T) {
-	solar := laFixedSolar()
-	for _, n := range []int{3, 5, 7} {
-		schedule := buildSchedule(solar.Sunrise, solar.Sunset, solar.SolarNoon, n)
-		want := n + 2
-		if len(schedule) != want {
-			t.Errorf("additional=%d: want %d captures, got %d", n, want, len(schedule))
-		}
-		assertSorted(t, schedule)
-		wantNoon := solar.SolarNoon.Truncate(time.Second)
-		count := 0
-		for _, r := range schedule {
-			if r.Equal(wantNoon) {
-				count++
-			}
-		}
-		if count != 1 {
-			t.Errorf("additional=%d: solar noon %v appears %d times in %v", n, wantNoon, count, schedule)
-		}
+func TestBuildSchedule_largeInterval(t *testing.T) {
+	// Interval larger than span → just first and last
+	first := time.Unix(0, 0)
+	last := first.Add(30 * time.Minute)
+	schedule := buildSchedule(first, last, 60)
+	if len(schedule) != 2 {
+		t.Fatalf("want 2 captures, got %d: %v", len(schedule), schedule)
 	}
 }
 
@@ -170,7 +121,7 @@ func TestSetCaptureTimes_usesWebcamDate(t *testing.T) {
 	tzClient := &fixedTimezoneClient{tz: "America/Los_Angeles"}
 	solar := &fixedSolarClient{times: laFixedSolar()}
 
-	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 0)
+	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 15)
 
 	serverTZ := time.FixedZone("UTC+13", 13*3600)
 	serverTime := time.Date(2026, 6, 2, 1, 0, 0, 0, serverTZ)
@@ -189,7 +140,7 @@ func TestSetCaptureTimes_firstSunrise30(t *testing.T) {
 	tzClient := &fixedTimezoneClient{tz: "America/Los_Angeles"}
 	s := laFixedSolar()
 	solar := &fixedSolarClient{times: s}
-	wc := testWebcam(t, flagFirstSunrise30, flagLastSunset, 0)
+	wc := testWebcam(t, flagFirstSunrise30, flagLastSunset, 15)
 	ref := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 
 	if err := wc.SetCaptureTimes(context.Background(), ref, tzClient, solar); err != nil {
@@ -208,7 +159,7 @@ func TestSetCaptureTimes_lastSunset60(t *testing.T) {
 	tzClient := &fixedTimezoneClient{tz: "America/Los_Angeles"}
 	s := laFixedSolar()
 	solar := &fixedSolarClient{times: s}
-	wc := testWebcam(t, flagFirstSunrise, flagLastSunset60, 0)
+	wc := testWebcam(t, flagFirstSunrise, flagLastSunset60, 15)
 	ref := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 
 	if err := wc.SetCaptureTimes(context.Background(), ref, tzClient, solar); err != nil {
@@ -228,7 +179,7 @@ func TestSetCaptureTimes_firstTime(t *testing.T) {
 	s := laFixedSolar()
 	solar := &fixedSolarClient{times: s}
 
-	wc := testWebcam(t, flagFirstTime, flagLastSunset, 0)
+	wc := testWebcam(t, flagFirstTime, flagLastSunset, 15)
 	wc.FirstTimeValue = "07:00"
 	ref := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 
@@ -248,7 +199,7 @@ func TestSetCaptureTimes_firstTime(t *testing.T) {
 func TestSetCaptureTimes_errorOnFutureTimesRemaining(t *testing.T) {
 	tzClient := &fixedTimezoneClient{tz: "America/Los_Angeles"}
 	solar := &fixedSolarClient{times: laFixedSolar()}
-	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 0)
+	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 15)
 
 	wc.mu.Lock()
 	wc.CaptureTimes = []time.Time{time.Now().Add(time.Hour)}
@@ -267,7 +218,7 @@ func TestSetCaptureTimes_usesCachedTimezone(t *testing.T) {
 	tzClient := &fixedTimezoneClient{err: fmt.Errorf("should not be called")}
 	solar := &fixedSolarClient{times: laFixedSolar()}
 
-	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 0)
+	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 15)
 	wc.WebcamTZ = "America/Los_Angeles" // pre-populated cache
 
 	ref := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
@@ -289,7 +240,7 @@ func TestSetCaptureTimes_refetchesInvalidCachedTimezone(t *testing.T) {
 	tzClient := &fixedTimezoneClient{tz: validTZ}
 	solar := &fixedSolarClient{times: laFixedSolar()}
 
-	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 0)
+	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 15)
 	wc.WebcamTZ = "Not/A/ValidZone" // bad cached value
 
 	ref := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
@@ -311,7 +262,7 @@ func TestSetCaptureTimes_refetchesInvalidCachedTimezone(t *testing.T) {
 func TestSetCaptureTimes_loadLocationError(t *testing.T) {
 	tzClient := &fixedTimezoneClient{tz: "Not/A/Real/Timezone"}
 	solar := &fixedSolarClient{times: laFixedSolar()}
-	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 0)
+	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 15)
 	// WebcamTZ is empty, so GetTimezone is called and returns the bogus name.
 
 	err := wc.SetCaptureTimes(context.Background(), time.Now(), tzClient, solar)
@@ -326,7 +277,7 @@ func TestSetCaptureTimes_loadLocationError(t *testing.T) {
 func TestSetCaptureTimes_timezoneClientError(t *testing.T) {
 	tzClient := &fixedTimezoneClient{err: fmt.Errorf("tz lookup failed")}
 	solar := &fixedSolarClient{times: laFixedSolar()}
-	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 0)
+	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 15)
 
 	err := wc.SetCaptureTimes(context.Background(), time.Now(), tzClient, solar)
 	if err == nil {
@@ -342,7 +293,7 @@ func TestSetCaptureTimes_firstSunrise60(t *testing.T) {
 	tzClient := &fixedTimezoneClient{tz: "America/Los_Angeles"}
 	s := laFixedSolar()
 	solar := &fixedSolarClient{times: s}
-	wc := testWebcam(t, flagFirstSunrise60, flagLastSunset, 0)
+	wc := testWebcam(t, flagFirstSunrise60, flagLastSunset, 15)
 	ref := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 
 	if err := wc.SetCaptureTimes(context.Background(), ref, tzClient, solar); err != nil {
@@ -361,7 +312,7 @@ func TestSetCaptureTimes_lastSunset30(t *testing.T) {
 	tzClient := &fixedTimezoneClient{tz: "America/Los_Angeles"}
 	s := laFixedSolar()
 	solar := &fixedSolarClient{times: s}
-	wc := testWebcam(t, flagFirstSunrise, flagLastSunset30, 0)
+	wc := testWebcam(t, flagFirstSunrise, flagLastSunset30, 15)
 	ref := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 
 	if err := wc.SetCaptureTimes(context.Background(), ref, tzClient, solar); err != nil {
@@ -381,7 +332,7 @@ func TestSetCaptureTimes_lastTime(t *testing.T) {
 	s := laFixedSolar()
 	solar := &fixedSolarClient{times: s}
 
-	wc := testWebcam(t, flagFirstSunrise, flagLastTime, 0)
+	wc := testWebcam(t, flagFirstSunrise, flagLastTime, 15)
 	wc.LastTimeValue = "17:00"
 	ref := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 

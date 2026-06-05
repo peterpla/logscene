@@ -59,7 +59,7 @@ type Webcam struct {
 	LastSunset60   bool    `json:"lastSunset60"`
 	LastTime       bool    `json:"lastTime"`
 	LastTimeValue  string  `json:"lastTimeValue"`  // "HH:MM" in webcam local time; required when LastTime true
-	Additional int    `json:"additional"`                    // 0–47 extra captures between first and last
+	IntervalMinutes int `json:"intervalMinutes" validate:"min=1"` // minutes between captures; determines schedule density
 	Folder     string `json:"folder"    validate:"required"` // short name relative to BaseDir, e.g. "kohm-yah-mah-nee"
 	SourceType string `json:"sourceType,omitempty"`          // "url" (default) | "usb" | "stream"
 	DeviceName string `json:"deviceName,omitempty"`          // DirectShow device name; required when SourceType == "usb"
@@ -163,6 +163,10 @@ func (ws *Webcams) Read(path string, validate *validator.Validate) error {
 	}
 
 	for i, wc := range *ws {
+		// Migrate webcams saved before IntervalMinutes was introduced.
+		if wc.IntervalMinutes == 0 {
+			wc.IntervalMinutes = 15
+		}
 		if err := validate.Struct(wc); err != nil {
 			return fmt.Errorf("Webcams.Read: element %d (%s): %w", i, wc.Name, err)
 		}

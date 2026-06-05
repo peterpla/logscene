@@ -28,10 +28,12 @@ import (
 
 // server holds all shared state and injected dependencies.
 type server struct {
-	router       *httprouter.Router
-	validate     *validator.Validate
-	config       *Config
-	tmpl         *template.Template
+	router        *httprouter.Router
+	validate      *validator.Validate
+	config        *Config
+	tmplDashboard *template.Template
+	tmplNewWebcam *template.Template
+	tmplLatlong   *template.Template
 	webcams      *Webcams       // all configured webcams; protected by mu
 	storage      Storage
 	renderer     Renderer
@@ -90,6 +92,9 @@ func main() {
 	srv.router.Handler("GET", "/static/*filepath",
 		http.StripPrefix("/static/", http.FileServer(http.FS(staticSub))))
 	srv.router.GET("/", srv.handleHome())
+	srv.router.GET("/new", srv.handleGetNew())
+	srv.router.GET("/latlong", srv.handleGetLatlong())
+	srv.router.POST("/probe", srv.handleProbe())
 	srv.router.GET("/devices", srv.handleDevices())
 	srv.router.POST("/new", srv.handleNew())
 	srv.router.GET("/info", srv.handleInfo())
