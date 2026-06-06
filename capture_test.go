@@ -16,6 +16,20 @@ import (
 	"time"
 )
 
+// twoCallSolarClient returns first on the first call, second on all subsequent calls.
+type twoCallSolarClient struct {
+	first, second SolarTimes
+	calls         int
+}
+
+func (c *twoCallSolarClient) GetSolarTimes(_ context.Context, _, _ float64, _ time.Time) (SolarTimes, error) {
+	c.calls++
+	if c.calls == 1 {
+		return c.first, nil
+	}
+	return c.second, nil
+}
+
 // failingNTimesSolarClient returns an error for the first n calls, then succeeds.
 type failingNTimesSolarClient struct {
 	n     int
@@ -478,6 +492,122 @@ func TestUpdateNextCapture_rollsOverToTomorrow(t *testing.T) {
 	}
 	if !newDayLast.Equal(s.Sunset) {
 		t.Errorf("DayLast after rollover: want %v, got %v", s.Sunset, newDayLast)
+	}
+}
+
+// TestUpdateNextCapture_rolloverNextCaptureAtIsSunrise verifies that after the
+// last capture of the day the schedule rolls over to tomorrow's sunrise, not noon.
+// This guards against the bug where tomorrowRef=noon caused firstFutureCapture to
+// skip the entire morning.
+func TestUpdateNextCapture_rolloverNextCaptureAtIsSunrise(t *testing.T) {
+	loc, _ := time.LoadLocation("America/Los_Angeles")
+
+	// dayLast is the "last capture of today" that triggers the tomorrow rollover.
+	dayLast := time.Now().Add(-time.Hour)
+
+	// Pre-compute what tomorrowRef UpdateNextCapture will derive from dayLast,
+	// then place sunrise 1h after that midnight so firstFutureCapture sees
+	// midnight < sunrise and returns sunrise unchanged.
+	dayLastLocal := dayLast.In(loc)
+	y, mo, d := dayLastLocal.Date()
+	tomorrowMidnight := time.Date(y, mo, d+1, 0, 0, 1, 0, loc)
+	futureSunrise := tomorrowMidnight.Add(time.Hour)  // 1 AM local — safely after midnight
+	futureSunset := tomorrowMidnight.Add(13 * time.Hour)
+
+	tzClient := &fixedTimezoneClient{tz: "America/Los_Angeles"}
+	solar := &fixedSolarClient{times: SolarTimes{
+		Sunrise:   futureSunrise,
+		SolarNoon: tomorrowMidnight.Add(7 * time.Hour),
+		Sunset:    futureSunset,
+	}}
+
+	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 15)
+	wc.mu.Lock()
+	wc.WebcamLoc = loc
+	wc.WebcamTZ = "America/Los_Angeles"
+	wc.DayFirst = dayLast.Add(-8 * time.Hour)
+	wc.DayLast = dayLast
+	wc.NextCaptureAt = dayLast // equal to DayLast → triggers tomorrow fetch
+	wc.mu.Unlock()
+
+	if err := wc.UpdateNextCapture(context.Background(), tzClient, solar); err != nil {
+		t.Fatalf("UpdateNextCapture: %v", err)
+	}
+	wc.mu.RLock()
+	got := wc.NextCaptureAt
+	dayFirst := wc.DayFirst
+	wc.mu.RUnlock()
+
+	if !got.Equal(dayFirst) {
+		t.Errorf("NextCaptureAt after rollover: want sunrise %v, got %v", dayFirst, got)
+	}
+}
+
+// TestCapture_startupRolloverSchedulesTomorrow verifies that when the capture
+// goroutine starts after today's last capture, the startup rollover schedules
+// tomorrow's first capture at sunrise (DayFirst), not at noon.
+func TestCapture_startupRolloverSchedulesTomorrow(t *testing.T) {
+	loc, _ := time.LoadLocation("America/Los_Angeles")
+
+	// First solar call: today with past sunset → NextCaptureAt=0 after SetCaptureTimes.
+	pastSunset := time.Now().Add(-time.Hour)
+	pastSolar := SolarTimes{
+		Sunrise:   time.Now().Add(-12 * time.Hour),
+		SolarNoon: time.Now().Add(-6 * time.Hour),
+		Sunset:    pastSunset,
+	}
+
+	// Pre-compute tomorrowRef the goroutine will derive from pastSolar.Sunset,
+	// then place futureSunrise 1h after that midnight.
+	sunsetLocal := pastSunset.In(loc)
+	y, mo, d := sunsetLocal.Date()
+	tomorrowMidnight := time.Date(y, mo, d+1, 0, 0, 1, 0, loc)
+	futureSunrise := tomorrowMidnight.Add(time.Hour)
+	futureSunset := tomorrowMidnight.Add(13 * time.Hour)
+	futureSolar := SolarTimes{
+		Sunrise:   futureSunrise,
+		SolarNoon: tomorrowMidnight.Add(7 * time.Hour),
+		Sunset:    futureSunset,
+	}
+
+	srv := newTestServer(t)
+	srv.tz = &fixedTimezoneClient{tz: "America/Los_Angeles"}
+	srv.solar = &twoCallSolarClient{first: pastSolar, second: futureSolar}
+
+	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 15)
+	wc.mu.Lock()
+	wc.WebcamLoc = loc
+	wc.WebcamTZ = "America/Los_Angeles"
+	wc.mu.Unlock()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	srv.webcamWg.Add(1)
+	go capture(ctx, wc, time.Millisecond, srv)
+
+	// Wait for the rollover to complete: NextCaptureAt transitions from zero to
+	// the future sunrise returned by the second solar call.
+	deadline := time.Now().Add(2 * time.Second)
+	var got time.Time
+	for time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+		wc.mu.RLock()
+		got = wc.NextCaptureAt
+		wc.mu.RUnlock()
+		if !got.IsZero() {
+			break
+		}
+	}
+	if got.IsZero() {
+		t.Fatal("startup rollover never set NextCaptureAt")
+	}
+
+	wc.mu.RLock()
+	dayFirst := wc.DayFirst
+	wc.mu.RUnlock()
+
+	if !got.Equal(dayFirst) {
+		t.Errorf("NextCaptureAt after startup rollover: want DayFirst=%v, got %v", dayFirst, got)
 	}
 }
 

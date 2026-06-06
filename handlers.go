@@ -91,7 +91,7 @@ func webcamCard(wc *Webcam) webcamCardData {
 			d.CapturesToday = int(wc.NextCaptureAt.Sub(wc.DayFirst) / interval)
 		}
 		if wc.WebcamLoc != nil {
-			d.NextCapture = wc.NextCaptureAt.In(wc.WebcamLoc).Format("3:04 PM")
+			d.NextCapture = wc.NextCaptureAt.In(wc.WebcamLoc).Format("3:04 PM MST")
 		} else {
 			d.NextCapture = wc.NextCaptureAt.UTC().Format("15:04 UTC")
 		}

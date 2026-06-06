@@ -1280,6 +1280,27 @@ func TestHandleHome_webcamCard_doneForToday(t *testing.T) {
 	assertHTML(t, body, `Done for today`)
 }
 
+// TestWebcamCard_nextCaptureIncludesTimezone verifies that the displayed time
+// carries the webcam's timezone abbreviation (e.g. "PDT") so the dashboard is
+// unambiguous when the viewer is in a different zone.
+func TestWebcamCard_nextCaptureIncludesTimezone(t *testing.T) {
+	loc, _ := time.LoadLocation("America/Los_Angeles")
+	wc := newWebcam()
+	wc.IntervalMinutes = 15
+	wc.WebcamLoc = loc
+	// 19:00 UTC = 12:00 PM PDT (UTC-7, summer / PDT offset)
+	wc.NextCaptureAt = time.Date(2026, 6, 6, 19, 0, 0, 0, time.UTC)
+	wc.DayFirst = time.Date(2026, 6, 6, 13, 0, 0, 0, time.UTC) // 06:00 PDT
+	wc.DayLast = time.Date(2026, 6, 7, 3, 0, 0, 0, time.UTC)   // 20:00 PDT
+
+	d := webcamCard(wc)
+
+	want := "12:00 PM PDT"
+	if d.NextCapture != want {
+		t.Errorf("NextCapture: want %q, got %q", want, d.NextCapture)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // GET /latlong
 // ---------------------------------------------------------------------------

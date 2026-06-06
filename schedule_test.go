@@ -130,6 +130,24 @@ func TestSetCaptureTimes_usesWebcamDate(t *testing.T) {
 	}
 }
 
+func TestSetCaptureTimes_firstSunrise(t *testing.T) {
+	tzClient := &fixedTimezoneClient{tz: "America/Los_Angeles"}
+	s := laFixedSolar()
+	solar := &fixedSolarClient{times: s}
+	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 15)
+	ref := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+
+	if err := wc.SetCaptureTimes(context.Background(), ref, tzClient, solar); err != nil {
+		t.Fatalf("SetCaptureTimes: %v", err)
+	}
+	wc.mu.RLock()
+	got := wc.DayFirst
+	wc.mu.RUnlock()
+	if !got.Equal(s.Sunrise) {
+		t.Errorf("DayFirst: want sunrise %v, got %v", s.Sunrise, got)
+	}
+}
+
 func TestSetCaptureTimes_firstSunrise30(t *testing.T) {
 	tzClient := &fixedTimezoneClient{tz: "America/Los_Angeles"}
 	s := laFixedSolar()

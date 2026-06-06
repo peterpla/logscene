@@ -77,7 +77,7 @@ func capture(ctx context.Context, wc *Webcam, pollInterval time.Duration, srv *s
 	if rollover {
 		wcTime := wc.DayLast.In(wc.WebcamLoc)
 		y, m, d := wcTime.Date()
-		tomorrowRef = time.Date(y, m, d+1, 12, 0, 0, 0, wc.WebcamLoc)
+		tomorrowRef = time.Date(y, m, d+1, 0, 0, 1, 0, wc.WebcamLoc)
 	}
 	wc.mu.Unlock()
 	if rollover {
@@ -326,7 +326,7 @@ func (wc *Webcam) UpdateNextCapture(ctx context.Context, tzClient TimezoneClient
 		if wc.WebcamLoc != nil {
 			wcTime := wc.DayLast.In(wc.WebcamLoc)
 			y, m, d := wcTime.Date()
-			tomorrowRef = time.Date(y, m, d+1, 12, 0, 0, 0, wc.WebcamLoc)
+			tomorrowRef = time.Date(y, m, d+1, 0, 0, 1, 0, wc.WebcamLoc)
 		}
 		wc.NextCaptureAt = time.Time{}
 	} else {
