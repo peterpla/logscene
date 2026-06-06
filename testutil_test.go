@@ -102,10 +102,16 @@ func (m *mockImageFetcher) Fetch(_ context.Context, _ string) (io.ReadCloser, st
 type mockRenderer struct {
 	renderCalled bool
 	renderErr    error
+	lastOpts     RenderOptions
+	called       chan struct{} // closed on first Render call; nil = don't signal
 }
 
-func (m *mockRenderer) Render(_ context.Context, _, _ string, _ RenderOptions) error {
+func (m *mockRenderer) Render(_ context.Context, _, _ string, opts RenderOptions) error {
 	m.renderCalled = true
+	m.lastOpts = opts
+	if m.called != nil {
+		close(m.called)
+	}
 	return m.renderErr
 }
 
@@ -159,4 +165,16 @@ func laFixedSolar() SolarTimes {
 	noon := time.Date(2026, 6, 1, 19, 50, 0, 0, time.UTC)    // 12:50 PDT
 	sunset := time.Date(2026, 6, 2, 3, 0, 0, 0, time.UTC)    // 20:00 PDT
 	return SolarTimes{Sunrise: sunrise, SolarNoon: noon, Sunset: sunset}
+}
+
+// futureSolarTimes returns solar times ~16-24h in the future from now, so
+// that firstFutureCapture sets NextCaptureAt to a future time (preventing the
+// rollover path in capture()).
+func futureSolarTimes() SolarTimes {
+	now := time.Now().UTC()
+	return SolarTimes{
+		Sunrise:   now.Add(16 * time.Hour),
+		SolarNoon: now.Add(20 * time.Hour),
+		Sunset:    now.Add(24 * time.Hour),
+	}
 }

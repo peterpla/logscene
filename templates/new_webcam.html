@@ -431,8 +431,9 @@
       }
     });
 
-    // Init stats for default selection (15 min)
+    // Init stats and source-type UI for the default selection.
     updateStats(15);
+    applySourceType(document.querySelector('input[name="sourceType"]:checked').value);
   });
 </script>
 

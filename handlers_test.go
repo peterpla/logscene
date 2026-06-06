@@ -617,6 +617,31 @@ func TestHandleRender_success(t *testing.T) {
 	}
 }
 
+func TestHandleRender_stridePassedThrough(t *testing.T) {
+	srv := newTestServer(t)
+	mr := &mockRenderer{called: make(chan struct{})}
+	srv.renderer = mr
+	srv.router.POST("/render", srv.handleRender())
+
+	body := `{"folder":"f","output":"out.mp4","stride":3}`
+	req := httptest.NewRequest(http.MethodPost, "/render", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", w.Code)
+	}
+	select {
+	case <-mr.called:
+	case <-time.After(time.Second):
+		t.Fatal("Render was not called within 1s")
+	}
+	if mr.lastOpts.Stride != 3 {
+		t.Errorf("Stride: want 3, got %d", mr.lastOpts.Stride)
+	}
+}
+
 func TestHandleRender_badJSON(t *testing.T) {
 	srv := newTestServer(t)
 	srv.router.POST("/render", srv.handleRender())
@@ -1228,4 +1253,148 @@ func TestHandleHome_trialReadOnly(t *testing.T) {
 	_, body := getBody(t, srv, "/")
 	assertHTML(t, body, `trial has ended`)
 	assertHTML(t, body, `disabled title="Upgrade to render"`)
+}
+
+// ---------------------------------------------------------------------------
+// webcamCard — "Done for today" branch
+// ---------------------------------------------------------------------------
+
+func TestHandleHome_webcamCard_doneForToday(t *testing.T) {
+	srv := newTestServer(t)
+	if err := srv.initTemplates(); err != nil {
+		t.Fatalf("initTemplates: %v", err)
+	}
+	srv.router.GET("/", srv.handleHome())
+
+	wc := newWebcam()
+	wc.Name = "Done Cam"
+	wc.IntervalMinutes = 60
+	wc.DayFirst = time.Now().Add(-8 * time.Hour)
+	wc.DayLast = time.Now().Add(-time.Minute) // last capture was in the past
+	// NextCaptureAt left zero → "Done for today" path in webcamCard
+	srv.mu.Lock()
+	srv.webcams.Append(wc)
+	srv.mu.Unlock()
+
+	_, body := getBody(t, srv, "/")
+	assertHTML(t, body, `Done for today`)
+}
+
+// ---------------------------------------------------------------------------
+// GET /latlong
+// ---------------------------------------------------------------------------
+
+func TestHandleGetLatlong(t *testing.T) {
+	srv := newTestServer(t)
+	if err := srv.initTemplates(); err != nil {
+		t.Fatalf("initTemplates: %v", err)
+	}
+	srv.router.GET("/latlong", srv.handleGetLatlong())
+
+	_, body := getBody(t, srv, "/latlong")
+	assertHTML(t, body, "Find Coordinates")
+}
+
+// ---------------------------------------------------------------------------
+// POST /probe
+// ---------------------------------------------------------------------------
+
+func TestHandleProbe_badJSON(t *testing.T) {
+	srv := newTestServer(t)
+	srv.router.POST("/probe", srv.handleProbe())
+
+	req := httptest.NewRequest(http.MethodPost, "/probe", strings.NewReader("not json"))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("want 400, got %d", w.Code)
+	}
+}
+
+func TestHandleProbe_nonURLSourceType(t *testing.T) {
+	srv := newTestServer(t)
+	srv.router.POST("/probe", srv.handleProbe())
+
+	body := `{"url":"http://example.com/cam.jpg","sourceType":"usb"}`
+	req := httptest.NewRequest(http.MethodPost, "/probe", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	var resp struct{ Error string `json:"error"` }
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Error == "" {
+		t.Error("expected error response for non-URL sourceType")
+	}
+}
+
+func TestHandleProbe_invalidURLPrefix(t *testing.T) {
+	srv := newTestServer(t)
+	srv.router.POST("/probe", srv.handleProbe())
+
+	body := `{"url":"ftp://example.com/cam.jpg","sourceType":"url"}`
+	req := httptest.NewRequest(http.MethodPost, "/probe", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	var resp struct{ Error string `json:"error"` }
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Error == "" {
+		t.Error("expected error response for non-http URL")
+	}
+}
+
+func TestHandleProbe_fetchError(t *testing.T) {
+	srv := newTestServer(t)
+	srv.router.POST("/probe", srv.handleProbe())
+
+	// Point at a closed server so the fetch fails.
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	dead.Close()
+
+	body := fmt.Sprintf(`{"url":"%s/cam.jpg","sourceType":"url"}`, dead.URL)
+	req := httptest.NewRequest(http.MethodPost, "/probe", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	var resp struct{ Error string `json:"error"` }
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Error == "" {
+		t.Error("expected error response for unreachable camera")
+	}
+}
+
+func TestHandleProbe_success(t *testing.T) {
+	camServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/jpeg")
+		fmt.Fprint(w, "fake-image-data")
+	}))
+	defer camServer.Close()
+
+	srv := newTestServer(t)
+	srv.router.POST("/probe", srv.handleProbe())
+
+	body := fmt.Sprintf(`{"url":"%s/cam.jpg","sourceType":"url"}`, camServer.URL)
+	req := httptest.NewRequest(http.MethodPost, "/probe", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	var resp struct {
+		Bytes int64  `json:"bytes"`
+		Error string `json:"error"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Error != "" {
+		t.Errorf("unexpected error: %q", resp.Error)
+	}
+	if resp.Bytes == 0 {
+		t.Error("expected non-zero bytes from probe")
+	}
 }

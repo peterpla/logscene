@@ -40,7 +40,8 @@
         {{else}}
         <button class="btn btn-sm btn-outline-primary"
                 data-bs-toggle="modal" data-bs-target="#renderModal"
-                data-folder="{{.Folder}}">Render</button>
+                data-folder="{{.Folder}}"
+                data-interval="{{.IntervalMinutes}}">Render</button>
         {{end}}
       </div>
     </div>
@@ -73,7 +74,14 @@
           </div>
         </div>
         <div class="mb-3">
-          <label for="renderFPS" class="form-label">FPS <span class="text-muted">(0 = default)</span></label>
+          <label for="renderStride" class="form-label">Capture stride</label>
+          <select class="form-select" id="renderStride">
+            <option value="1">Every capture</option>
+          </select>
+        </div>
+        <p class="text-muted small mb-3" id="renderEstimate"></p>
+        <div class="mb-3">
+          <label for="renderFPS" class="form-label">FPS <span class="text-muted">(0 = default 24)</span></label>
           <input type="number" class="form-control" id="renderFPS" value="0" min="0" max="60">
         </div>
         <div id="renderStatus" class="text-muted small"></div>
@@ -87,14 +95,79 @@
 </div>
 
 <script>
+  // ── Stride helpers ──────────────────────────────────────────────
+  function buildStrideOptions(intervalMins) {
+    var targets = [5, 10, 15, 30, 60, 120];
+    var opts = [{stride: 1, effective: intervalMins}];
+    targets.forEach(function(t) {
+      if (t > intervalMins && t % intervalMins === 0) {
+        opts.push({stride: t / intervalMins, effective: t});
+      }
+    });
+    return opts;
+  }
+
+  function strideLabel(stride, effective) {
+    var mins = effective >= 60
+      ? (effective / 60) + ' hr'
+      : effective + ' min';
+    if (stride === 1) return 'Every capture (' + mins + ')';
+    var suffix = stride === 2 ? 'nd' : stride === 3 ? 'rd' : 'th';
+    return 'Every ' + stride + suffix + ' capture (' + mins + ')';
+  }
+
+  function updateRenderEstimate() {
+    var modal = document.getElementById('renderModal');
+    var intervalMins = modal._interval || 15;
+    var stride = parseInt(document.getElementById('renderStride').value) || 1;
+    var start = document.getElementById('renderStart').value;
+    var end   = document.getElementById('renderEnd').value;
+    var fps   = parseInt(document.getElementById('renderFPS').value) || 24;
+
+    var capturesPerDay = Math.floor(14 * 60 / intervalMins) + 1;
+    var framesPerDay   = Math.ceil(capturesPerDay / stride);
+
+    var el = document.getElementById('renderEstimate');
+    if (start && end) {
+      var days = Math.max(1, Math.round((new Date(end) - new Date(start)) / 86400000) + 1);
+      var total   = framesPerDay * days;
+      var seconds = total / fps;
+      var dur = seconds < 60
+        ? seconds.toFixed(1) + ' s'
+        : (seconds / 60).toFixed(1) + ' min';
+      el.textContent = '~' + dur + ' at ' + fps + ' fps (' + total + ' frames, ' + days + ' days)';
+    } else {
+      el.textContent = '~' + framesPerDay + ' frames/day at this stride';
+    }
+  }
+
+  // ── Modal lifecycle ─────────────────────────────────────────────
   var renderModal = document.getElementById('renderModal');
   renderModal.addEventListener('show.bs.modal', function(e) {
-    this._folder = e.relatedTarget.dataset.folder;
+    this._folder   = e.relatedTarget.dataset.folder;
+    this._interval = parseInt(e.relatedTarget.dataset.interval) || 15;
     document.getElementById('renderOutput').value = this._folder + '.mp4';
     document.getElementById('renderStatus').textContent = '';
     document.getElementById('renderSubmit').disabled = false;
+
+    var sel = document.getElementById('renderStride');
+    sel.innerHTML = '';
+    buildStrideOptions(this._interval).forEach(function(opt) {
+      var o = document.createElement('option');
+      o.value       = opt.stride;
+      o.textContent = strideLabel(opt.stride, opt.effective);
+      sel.appendChild(o);
+    });
+
+    updateRenderEstimate();
   });
 
+  document.getElementById('renderStride').addEventListener('change', updateRenderEstimate);
+  document.getElementById('renderStart').addEventListener('change', updateRenderEstimate);
+  document.getElementById('renderEnd').addEventListener('change', updateRenderEstimate);
+  document.getElementById('renderFPS').addEventListener('input', updateRenderEstimate);
+
+  // ── Submit ──────────────────────────────────────────────────────
   document.getElementById('renderSubmit').addEventListener('click', function() {
     var folder = document.getElementById('renderModal')._folder;
     var output = document.getElementById('renderOutput').value.trim();
@@ -105,9 +178,10 @@
     var payload = {
       folder: folder,
       output: output,
-      fps:   parseInt(document.getElementById('renderFPS').value) || 0,
-      start: document.getElementById('renderStart').value,
-      end:   document.getElementById('renderEnd').value,
+      fps:    parseInt(document.getElementById('renderFPS').value) || 0,
+      start:  document.getElementById('renderStart').value,
+      end:    document.getElementById('renderEnd').value,
+      stride: parseInt(document.getElementById('renderStride').value) || 1,
     };
     fetch('/render', {
       method: 'POST',

@@ -560,6 +560,79 @@ func TestUpdateNextCapture_retriesOnTransientSolarFailure(t *testing.T) {
 // CaptureImage — stream dispatch
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// capture() goroutine — early-exit paths
+// ---------------------------------------------------------------------------
+
+func TestCapture_disabled(t *testing.T) {
+	srv := newTestServer(t)
+	wc := newWebcam()
+	wc.Disabled = true
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	srv.webcamWg.Add(1)
+
+	done := make(chan struct{})
+	go func() {
+		capture(ctx, wc, time.Millisecond, srv)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("capture goroutine did not exit for disabled webcam")
+	}
+}
+
+func TestCapture_setCaptureTimes_error(t *testing.T) {
+	srv := newTestServer(t)
+	srv.tz = &fixedTimezoneClient{err: errors.New("timezone service unavailable")}
+
+	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 15)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	srv.webcamWg.Add(1)
+
+	done := make(chan struct{})
+	go func() {
+		capture(ctx, wc, time.Millisecond, srv)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("capture goroutine did not exit after SetCaptureTimes error")
+	}
+}
+
+func TestCapture_autoSuspend(t *testing.T) {
+	srv := newTestServer(t)
+	srv.solar = &fixedSolarClient{times: futureSolarTimes()}
+
+	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 15)
+	wc.FirstFailure = time.Now().Add(-15 * 24 * time.Hour)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	srv.webcamWg.Add(1)
+
+	done := make(chan struct{})
+	go func() {
+		capture(ctx, wc, time.Millisecond, srv)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("capture goroutine did not exit via auto-suspend")
+	}
+}
+
 func TestCaptureImage_stream(t *testing.T) {
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		t.Skip("ffmpeg not found in PATH")

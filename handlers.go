@@ -25,13 +25,14 @@ import (
 
 // webcamCardData summarises one webcam for display on the dashboard.
 type webcamCardData struct {
-	Name          string
-	Folder        string
-	SourceType    string
-	StatusLabel   string
-	StatusClass   string // Bootstrap bg-* colour token
-	NextCapture   string // formatted time or short status string
-	CapturesToday int
+	Name            string
+	Folder          string
+	SourceType      string
+	IntervalMinutes int
+	StatusLabel     string
+	StatusClass     string // Bootstrap bg-* colour token
+	NextCapture     string // formatted time or short status string
+	CapturesToday   int
 }
 
 // dashboardData is the template context for the dashboard page.
@@ -55,9 +56,10 @@ func webcamCard(wc *Webcam) webcamCardData {
 	defer wc.mu.RUnlock()
 
 	d := webcamCardData{
-		Name:       wc.Name,
-		Folder:     wc.Folder,
-		SourceType: wc.SourceType,
+		Name:            wc.Name,
+		Folder:          wc.Folder,
+		SourceType:      wc.SourceType,
+		IntervalMinutes: wc.IntervalMinutes,
 	}
 	if d.SourceType == "" {
 		d.SourceType = "url"
@@ -353,11 +355,12 @@ func (s *server) handleLogs() httprouter.Handle {
 
 // renderRequest is the JSON body for POST /render.
 type renderRequest struct {
-	Folder string `json:"folder"` // webcam folder name, e.g. "kohm-yah-mah-nee"
-	Output string `json:"output"` // output video file path
-	Start  string `json:"start"`  // optional: YYYY-MM-DD inclusive lower bound
-	End    string `json:"end"`    // optional: YYYY-MM-DD inclusive upper bound
-	FPS    int    `json:"fps"`    // optional: frames per second (0 = default 24)
+	Folder string `json:"folder"`  // webcam folder name, e.g. "kohm-yah-mah-nee"
+	Output string `json:"output"`  // output video file path
+	Start  string `json:"start"`   // optional: YYYY-MM-DD inclusive lower bound
+	End    string `json:"end"`     // optional: YYYY-MM-DD inclusive upper bound
+	FPS    int    `json:"fps"`     // optional: frames per second (0 = default 24)
+	Stride int    `json:"stride"`  // optional: keep every Nth frame (0 or 1 = every frame)
 }
 
 // handleRender triggers an ffmpeg render for a stored folder of images.
@@ -397,6 +400,7 @@ func (s *server) handleRender() httprouter.Handle {
 			FPS:       req.FPS,
 			StartDate: strings.ReplaceAll(req.Start, "-", ""),
 			EndDate:   strings.ReplaceAll(req.End, "-", ""),
+			Stride:    req.Stride,
 		}
 
 		ctx := s.ctx

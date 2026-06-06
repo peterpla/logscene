@@ -125,6 +125,33 @@ func TestLocalRenderer_Render_dateFilterEndDate(t *testing.T) {
 	}
 }
 
+// TestLocalRenderer_Render_stride verifies that only every Nth frame is kept.
+func TestLocalRenderer_Render_stride(t *testing.T) {
+	dir := t.TempDir()
+	store := NewLocalStorage()
+	ctx := context.Background()
+
+	for _, name := range []string{
+		"Cam 20260601120000.jpg",
+		"Cam 20260601121500.jpg",
+		"Cam 20260601123000.jpg",
+		"Cam 20260601124500.jpg",
+		"Cam 20260601130000.jpg",
+		"Cam 20260601131500.jpg",
+	} {
+		if err := store.Write(ctx, filepath.Join(dir, name), strings.NewReader("x")); err != nil {
+			t.Fatalf("Write %s: %v", name, err)
+		}
+	}
+
+	r := NewLocalRenderer()
+	// Stride 3 on 6 frames keeps indices 0 and 3 — 2 frames, not zero.
+	err := r.Render(ctx, dir, filepath.Join(dir, "out.mp4"), RenderOptions{Stride: 3, FPS: 24})
+	if err != nil && strings.Contains(err.Error(), "no frames") {
+		t.Fatalf("stride filter reduced to zero frames: %v", err)
+	}
+}
+
 // TestLocalRenderer_Render_invokesFFmpeg writes real frame files to disk and
 // calls Render, exercising the ffmpeg-invocation path. If ffmpeg is not on
 // PATH the test logs the error and passes — the goal is line coverage past the

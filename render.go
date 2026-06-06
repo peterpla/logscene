@@ -25,6 +25,7 @@ type RenderOptions struct {
 	FPS       int    // frames per second; 0 uses the default (24)
 	StartDate string // YYYYMMDD inclusive lower bound; empty means no lower bound
 	EndDate   string // YYYYMMDD inclusive upper bound; empty means no upper bound
+	Stride    int    // keep every Nth frame (0 or 1 = every frame)
 }
 
 // Renderer assembles captured images into a timelapse video.
@@ -89,6 +90,15 @@ func (r *LocalRenderer) Render(ctx context.Context, dir, outputKey string, opts 
 	if len(frames) == 0 {
 		return fmt.Errorf("Render: no frames found in %q", dir)
 	}
+
+	if opts.Stride > 1 {
+		filtered := make([]string, 0, (len(frames)+opts.Stride-1)/opts.Stride)
+		for i := 0; i < len(frames); i += opts.Stride {
+			filtered = append(filtered, frames[i])
+		}
+		frames = filtered
+	}
+
 	log.Printf("Render: %d frames → %s", len(frames), outputKey)
 
 	tmp, err := os.CreateTemp("", "logscene-concat-*.txt")
