@@ -1,8 +1,13 @@
 BINARY    := logscene.exe
 SRC       := .
 LOGDIR    := $(LOGSCENE_LOGDIR)
-VERSION   := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
-BUILDDATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+ifeq ($(OS),Windows_NT)
+    VERSION   := $(shell git describe --tags --always --dirty)
+    BUILDDATE := $(shell powershell -NoProfile -Command "(Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')")
+else
+    VERSION   := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+    BUILDDATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+endif
 LDFLAGS   := -X main.Version=$(VERSION) -X main.BuildDate=$(BUILDDATE)
 
 .PHONY: build run stop test test-local logs tidy clean
