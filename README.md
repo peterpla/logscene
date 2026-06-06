@@ -4,8 +4,8 @@ A lightweight Go server that captures images from public webcam URLs on a
 solar-aware schedule and assembles them into timelapse videos with ffmpeg.
 
 Capture times are anchored to sunrise and sunset at each webcam's location,
-with configurable additional shots evenly distributed through the day. A full
-year of captures at 49 shots/day yields roughly 6 minutes of video at 24 fps.
+with a configurable interval between shots. A full year of captures every
+5 minutes yields roughly 6 minutes of video at 24 fps.
 
 ---
 
@@ -28,8 +28,8 @@ year of captures at 49 shots/day yields roughly 6 minutes of video at 24 fps.
 - **Solar-aware scheduling** — first and last captures of the day are tied to
   sunrise/sunset (or offsets of ±30/60 min), automatically adjusting as days
   lengthen and shorten through the year
-- **Flexible daily density** — 0–47 additional evenly-spaced shots between the
-  first and last capture (49 shots/day at max ≈ one every 15 minutes)
+- **Configurable capture interval** — `intervalMinutes` controls how often shots
+  are taken between the first and last capture of the day
 - **Resilient capture loop** — graduated outage backoff: exponential retry for
   the first 24 h, hourly for 24–48 h, daily for 48 h–2 weeks, then
   auto-suspend with a prominent log message
@@ -139,7 +139,7 @@ but can also be edited by hand (restart required to pick up manual changes).
     "lastSunset60": false,
     "lastTime": false,
     "lastTimeValue": "",
-    "additional": 47,
+    "intervalMinutes": 5,
     "folder": "kohm-yah-mah-nee",
     "webcamTZ": "America/Los_Angeles"
   }
@@ -166,9 +166,8 @@ but can also be edited by hand (restart required to pick up manual changes).
 | `lastSunset60` | 60 minutes before sunset |
 | `lastTime` | Fixed local time given by `lastTimeValue` (`"HH:MM"`) |
 
-**`additional`** — integer 0–47. Shots evenly distributed between the first
-and last capture. `additional: 47` yields 49 shots/day (≈ one every 15
-minutes across a 12-hour day).
+**`intervalMinutes`** — integer ≥ 1. Minutes between captures. A 5-minute
+interval across a 12-hour day yields roughly 145 shots/day.
 
 **`folder`** — subdirectory name under `LOGSCENE_BASE` where images are
 stored. Images are named `<webcam name> YYYYMMDDhhmmss.jpg`.

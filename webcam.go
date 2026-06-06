@@ -164,10 +164,6 @@ func (ws *Webcams) Read(path string, validate *validator.Validate) error {
 	}
 
 	for i, wc := range *ws {
-		// Migrate webcams saved before IntervalMinutes was introduced.
-		if wc.IntervalMinutes == 0 {
-			wc.IntervalMinutes = 15
-		}
 		if err := validate.Struct(wc); err != nil {
 			return fmt.Errorf("Webcams.Read: element %d (%s): %w", i, wc.Name, err)
 		}
