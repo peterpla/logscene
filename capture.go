@@ -26,7 +26,6 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"sort"
 	"time"
 )
 
@@ -71,17 +70,30 @@ func capture(ctx context.Context, wc *Webcam, pollInterval time.Duration, srv *s
 		}
 	}
 
-	if err := wc.UpdateNextCapture(ctx, time.Now(), srv.tz, srv.solar); err != nil {
-		log.Printf("%s: UpdateNextCapture failed: %v — exiting.\n"+
-			"  Restart the server to retry, or set \"disabled\": true in logscene.json to suppress.",
-			name, err)
-		return
+	// If we started up after today's last capture, roll over to tomorrow immediately.
+	wc.mu.Lock()
+	rollover := wc.NextCaptureAt.IsZero() && !wc.DayLast.IsZero() && wc.WebcamLoc != nil
+	var tomorrowRef time.Time
+	if rollover {
+		wcTime := wc.DayLast.In(wc.WebcamLoc)
+		y, m, d := wcTime.Date()
+		tomorrowRef = time.Date(y, m, d+1, 12, 0, 0, 0, wc.WebcamLoc)
+	}
+	wc.mu.Unlock()
+	if rollover {
+		if err := wc.SetCaptureTimes(ctx, tomorrowRef, srv.tz, srv.solar); err != nil {
+			log.Printf("%s: SetCaptureTimes (tomorrow) failed: %v — exiting.\n"+
+				"  Restart the server to retry, or set \"disabled\": true in logscene.json to suppress.",
+				name, err)
+			return
+		}
 	}
 
 	wc.mu.RLock()
-	log.Printf("%s: tz=%s nextCapture=%s schedule(%d)=%v firstFlags=%b lastFlags=%b",
-		name, wc.WebcamTZ, wc.CaptureTimes[wc.NextCapture],
-		len(wc.CaptureTimes), wc.CaptureTimes, wc.FirstFlags, wc.LastFlags)
+	log.Printf("%s: tz=%s nextCaptureAt=%s dayFirst=%s dayLast=%s firstFlags=%b lastFlags=%b",
+		name, wc.WebcamTZ, wc.NextCaptureAt.UTC().Format("15:04:05"),
+		wc.DayFirst.UTC().Format("15:04:05"), wc.DayLast.UTC().Format("15:04:05"),
+		wc.FirstFlags, wc.LastFlags)
 	wc.mu.RUnlock()
 
 	ticker := time.NewTicker(pollInterval)
@@ -121,7 +133,7 @@ func capture(ctx context.Context, wc *Webcam, pollInterval time.Duration, srv *s
 			wc.recordSuccess()
 			log.Printf("%s: captured %s (%d bytes)", name, key, size)
 
-			if err := wc.UpdateNextCapture(ctx, time.Now(), srv.tz, srv.solar); err != nil {
+			if err := wc.UpdateNextCapture(ctx, srv.tz, srv.solar); err != nil {
 				log.Printf("%s: UpdateNextCapture: %v — exiting.\n"+
 					"  Restart the server to retry, or set \"disabled\": true in logscene.json to suppress.",
 					name, err)
@@ -138,17 +150,13 @@ func (wc *Webcam) shouldAttemptNow() bool {
 	wc.mu.RLock()
 	defer wc.mu.RUnlock()
 
-	if wc.NextCapture >= len(wc.CaptureTimes) {
-		return false
-	}
-	if !time.Now().After(wc.CaptureTimes[wc.NextCapture]) {
+	if wc.NextCaptureAt.IsZero() || !time.Now().After(wc.NextCaptureAt) {
 		return false
 	}
 	if wc.FirstFailure.IsZero() {
 		return true // no active failure streak — attempt immediately
 	}
-	interval := wc.currentRetryInterval()
-	return time.Since(wc.LastAttempt) >= interval
+	return time.Since(wc.LastAttempt) >= wc.currentRetryInterval()
 }
 
 // autoSuspendDue returns true once the failure streak has lasted 2 weeks.
@@ -219,17 +227,14 @@ func (wc *Webcam) recordSuccess() {
 func (wc *Webcam) IsTimeForCapture() bool {
 	wc.mu.RLock()
 	defer wc.mu.RUnlock()
-	if wc.NextCapture >= len(wc.CaptureTimes) {
-		return false
-	}
-	return time.Now().After(wc.CaptureTimes[wc.NextCapture])
+	return !wc.NextCaptureAt.IsZero() && time.Now().After(wc.NextCaptureAt)
 }
 
 // NextCaptureTime returns the scheduled time of the next capture.
 func (wc *Webcam) NextCaptureTime() time.Time {
 	wc.mu.RLock()
 	defer wc.mu.RUnlock()
-	return wc.CaptureTimes[wc.NextCapture]
+	return wc.NextCaptureAt
 }
 
 // CaptureImage fetches one image from the webcam and writes it to storage.
@@ -306,46 +311,36 @@ func captureViaFfmpeg(ctx context.Context, args []string, store Storage, key str
 // targetKey builds the storage key: baseDir/folder/Name YYYYMMDDhhmmss
 func (wc *Webcam) targetKey(baseDir string) string {
 	wc.mu.RLock()
-	t := wc.CaptureTimes[wc.NextCapture]
+	t := wc.NextCaptureAt
 	wc.mu.RUnlock()
 	return baseDir + "/" + wc.Folder + "/" + wc.Name + " " + t.UTC().Format("20060102150405")
 }
 
-// UpdateNextCapture advances NextCapture to the first future time in CaptureTimes.
-func (wc *Webcam) UpdateNextCapture(
-	ctx context.Context,
-	baseTime time.Time,
-	tzClient TimezoneClient,
-	solarClient SolarClient,
-) error {
+// UpdateNextCapture advances NextCaptureAt by one interval after a successful capture.
+// If today's schedule is exhausted (just captured DayLast), fetches tomorrow's schedule.
+func (wc *Webcam) UpdateNextCapture(ctx context.Context, tzClient TimezoneClient, solarClient SolarClient) error {
 	wc.mu.Lock()
-	if !sort.SliceIsSorted(wc.CaptureTimes, func(i, j int) bool {
-		return wc.CaptureTimes[i].Before(wc.CaptureTimes[j])
-	}) {
-		sort.Slice(wc.CaptureTimes, func(i, j int) bool {
-			return wc.CaptureTimes[i].Before(wc.CaptureTimes[j])
-		})
-	}
-
-	wc.NextCapture = 0
-	for _, t := range wc.CaptureTimes {
-		if t.After(baseTime) {
-			break
-		}
-		wc.NextCapture++
-	}
-	needsNewDay := wc.NextCapture >= len(wc.CaptureTimes)
-
 	var tomorrowRef time.Time
-	if needsNewDay && wc.WebcamLoc != nil {
-		last := wc.CaptureTimes[len(wc.CaptureTimes)-1]
-		wcTime := last.In(wc.WebcamLoc)
-		y, m, d := wcTime.Date()
-		tomorrowRef = time.Date(y, m, d+1, 12, 0, 0, 0, wc.WebcamLoc)
+	if wc.NextCaptureAt.Equal(wc.DayLast) {
+		// Just captured the last slot — done for today; need tomorrow's schedule.
+		if wc.WebcamLoc != nil {
+			wcTime := wc.DayLast.In(wc.WebcamLoc)
+			y, m, d := wcTime.Date()
+			tomorrowRef = time.Date(y, m, d+1, 12, 0, 0, 0, wc.WebcamLoc)
+		}
+		wc.NextCaptureAt = time.Time{}
+	} else {
+		interval := time.Duration(wc.IntervalMinutes) * time.Minute
+		next := wc.NextCaptureAt.Add(interval)
+		if next.After(wc.DayLast) {
+			wc.NextCaptureAt = wc.DayLast
+		} else {
+			wc.NextCaptureAt = next
+		}
 	}
 	wc.mu.Unlock()
 
-	if !needsNewDay {
+	if tomorrowRef.IsZero() {
 		return nil
 	}
 
@@ -369,11 +364,11 @@ func (wc *Webcam) UpdateNextCapture(
 		}
 	}
 
-	wc.mu.Lock()
-	wc.NextCapture = 0
-	log.Printf("UpdateNextCapture: %q schedule for tomorrow set; captures(%d)=%v",
-		wc.Name, len(wc.CaptureTimes), wc.CaptureTimes)
-	wc.mu.Unlock()
+	wc.mu.RLock()
+	log.Printf("UpdateNextCapture: %q tomorrow set; dayFirst=%s dayLast=%s nextCaptureAt=%s",
+		wc.Name, wc.DayFirst.UTC().Format("15:04:05"),
+		wc.DayLast.UTC().Format("15:04:05"), wc.NextCaptureAt.UTC().Format("15:04:05"))
+	wc.mu.RUnlock()
 	return nil
 }
 

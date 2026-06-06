@@ -134,8 +134,7 @@ func TestHandleNext_withCapture(t *testing.T) {
 	srv := newTestServer(t)
 	wc := newWebcam()
 	wc.Name = "My Cam"
-	wc.CaptureTimes = []time.Time{time.Now().Add(time.Hour)}
-	wc.NextCapture = 0
+	wc.NextCaptureAt = time.Now().Add(time.Hour)
 	srv.mu.Lock()
 	srv.webcams.Append(wc)
 	srv.mu.Unlock()
@@ -1167,12 +1166,10 @@ func TestHandleHome_renderButton_withCaptures(t *testing.T) {
 
 	wc := newWebcam()
 	wc.Name = "Active Cam"
-	wc.CaptureTimes = []time.Time{
-		time.Now().Add(-2 * time.Hour),
-		time.Now().Add(-1 * time.Hour),
-		time.Now().Add(time.Hour),
-	}
-	wc.NextCapture = 2 // 2 captures already done
+	wc.IntervalMinutes = 60
+	wc.DayFirst = time.Now().Add(-2 * time.Hour)
+	wc.DayLast = time.Now().Add(2 * time.Hour)
+	wc.NextCaptureAt = time.Now().Add(time.Hour) // 2 intervals past DayFirst → CapturesToday=2
 	srv.mu.Lock()
 	srv.webcams.Append(wc)
 	srv.mu.Unlock()
@@ -1220,13 +1217,10 @@ func TestHandleHome_trialReadOnly(t *testing.T) {
 
 	wc := newWebcam()
 	wc.Name = "Old Cam"
-	wc.NextCapture = 3
-	wc.CaptureTimes = []time.Time{
-		time.Now().Add(-3 * time.Hour),
-		time.Now().Add(-2 * time.Hour),
-		time.Now().Add(-1 * time.Hour),
-		time.Now().Add(time.Hour),
-	}
+	wc.IntervalMinutes = 60
+	wc.DayFirst = time.Now().Add(-3 * time.Hour)
+	wc.DayLast = time.Now().Add(2 * time.Hour)
+	wc.NextCaptureAt = time.Now().Add(time.Hour)
 	srv.mu.Lock()
 	srv.webcams.Append(wc)
 	srv.mu.Unlock()

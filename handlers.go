@@ -72,19 +72,27 @@ func webcamCard(wc *Webcam) webcamCardData {
 		d.StatusLabel, d.StatusClass = "Active", "success"
 	}
 
-	d.CapturesToday = wc.NextCapture
 	switch {
-	case wc.NextCapture < len(wc.CaptureTimes):
-		next := wc.CaptureTimes[wc.NextCapture]
-		if wc.WebcamLoc != nil {
-			d.NextCapture = next.In(wc.WebcamLoc).Format("3:04 PM")
-		} else {
-			d.NextCapture = next.UTC().Format("15:04 UTC")
+	case wc.DayFirst.IsZero():
+		d.CapturesToday = 0
+		d.NextCapture = "Pending"
+	case wc.NextCaptureAt.IsZero():
+		// Done for today — compute total scheduled captures.
+		interval := time.Duration(wc.IntervalMinutes) * time.Minute
+		if interval > 0 {
+			d.CapturesToday = int(wc.DayLast.Sub(wc.DayFirst)/interval) + 1
 		}
-	case len(wc.CaptureTimes) > 0:
 		d.NextCapture = "Done for today"
 	default:
-		d.NextCapture = "Pending"
+		interval := time.Duration(wc.IntervalMinutes) * time.Minute
+		if interval > 0 {
+			d.CapturesToday = int(wc.NextCaptureAt.Sub(wc.DayFirst) / interval)
+		}
+		if wc.WebcamLoc != nil {
+			d.NextCapture = wc.NextCaptureAt.In(wc.WebcamLoc).Format("3:04 PM")
+		} else {
+			d.NextCapture = wc.NextCaptureAt.UTC().Format("15:04 UTC")
+		}
 	}
 
 	return d
@@ -282,8 +290,8 @@ func (s *server) handleNext() httprouter.Handle {
 		var nextTime time.Time
 		for _, wc := range *s.webcams {
 			wc.mu.RLock()
-			if wc.NextCapture < len(wc.CaptureTimes) {
-				t := wc.CaptureTimes[wc.NextCapture]
+			if !wc.NextCaptureAt.IsZero() {
+				t := wc.NextCaptureAt
 				if nextTime.IsZero() || t.Before(nextTime) {
 					nextTime = t
 					nextName = wc.Name

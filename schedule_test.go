@@ -20,60 +20,54 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// buildSchedule
+// firstFutureCapture
 // ---------------------------------------------------------------------------
 
-func TestBuildSchedule_anchors(t *testing.T) {
-	solar := laFixedSolar()
-	schedule := buildSchedule(solar.Sunrise, solar.Sunset, 60)
-	if len(schedule) < 2 {
-		t.Fatalf("want at least 2 captures, got %d", len(schedule))
-	}
-	if !schedule[0].Equal(solar.Sunrise) {
-		t.Errorf("first: want %v, got %v", solar.Sunrise, schedule[0])
-	}
-	if !schedule[len(schedule)-1].Equal(solar.Sunset) {
-		t.Errorf("last: want %v, got %v", solar.Sunset, schedule[len(schedule)-1])
+func TestFirstFutureCapture_beforeFirst(t *testing.T) {
+	first := time.Unix(1000, 0)
+	last := first.Add(4 * time.Hour)
+	got := firstFutureCapture(first, last, 60, first.Add(-time.Hour))
+	if !got.Equal(first) {
+		t.Errorf("want first=%v, got %v", first, got)
 	}
 }
 
-func TestBuildSchedule_intervalSpacing(t *testing.T) {
-	// 60-minute interval over a 4-hour span → first, +60, +120, +180, last(+240)
+func TestFirstFutureCapture_atFirst(t *testing.T) {
+	first := time.Unix(1000, 0)
+	last := first.Add(4 * time.Hour)
+	got := firstFutureCapture(first, last, 60, first)
+	if !got.Equal(first) {
+		t.Errorf("want first=%v, got %v", first, got)
+	}
+}
+
+func TestFirstFutureCapture_midDay(t *testing.T) {
 	first := time.Unix(0, 0)
 	last := first.Add(4 * time.Hour)
-	schedule := buildSchedule(first, last, 60)
-	if len(schedule) != 5 {
-		t.Fatalf("want 5 captures, got %d: %v", len(schedule), schedule)
+	// now = first + 90min → next interval is first + 120min
+	got := firstFutureCapture(first, last, 60, first.Add(90*time.Minute))
+	want := first.Add(2 * time.Hour)
+	if !got.Equal(want) {
+		t.Errorf("want %v, got %v", want, got)
 	}
-	for i := 1; i < len(schedule)-1; i++ {
-		gap := schedule[i].Sub(schedule[i-1])
-		if gap != time.Hour {
-			t.Errorf("gap[%d]=%v, want 1h", i, gap)
-		}
-	}
-	assertSorted(t, schedule)
 }
 
-func TestBuildSchedule_unevenSpan(t *testing.T) {
-	// 60-minute interval over a 90-minute span → first, +60, last(+90)
+func TestFirstFutureCapture_capsAtLast(t *testing.T) {
 	first := time.Unix(0, 0)
 	last := first.Add(90 * time.Minute)
-	schedule := buildSchedule(first, last, 60)
-	if len(schedule) != 3 {
-		t.Fatalf("want 3 captures, got %d: %v", len(schedule), schedule)
-	}
-	if !schedule[0].Equal(first) || !schedule[2].Equal(last) {
-		t.Errorf("anchors wrong: %v", schedule)
+	// now = first + 60min → next = first + 120min > last → return last
+	got := firstFutureCapture(first, last, 60, first.Add(60*time.Minute))
+	if !got.Equal(last) {
+		t.Errorf("want last=%v, got %v", last, got)
 	}
 }
 
-func TestBuildSchedule_largeInterval(t *testing.T) {
-	// Interval larger than span → just first and last
+func TestFirstFutureCapture_pastLast(t *testing.T) {
 	first := time.Unix(0, 0)
-	last := first.Add(30 * time.Minute)
-	schedule := buildSchedule(first, last, 60)
-	if len(schedule) != 2 {
-		t.Fatalf("want 2 captures, got %d: %v", len(schedule), schedule)
+	last := first.Add(time.Hour)
+	got := firstFutureCapture(first, last, 60, last.Add(time.Minute))
+	if !got.IsZero() {
+		t.Errorf("want zero time (done), got %v", got)
 	}
 }
 
@@ -148,7 +142,7 @@ func TestSetCaptureTimes_firstSunrise30(t *testing.T) {
 	}
 	want := s.Sunrise.Add(30 * time.Minute)
 	wc.mu.RLock()
-	got := wc.CaptureTimes[0]
+	got := wc.DayFirst
 	wc.mu.RUnlock()
 	if !got.Equal(want) {
 		t.Errorf("first capture: want %v, got %v", want, got)
@@ -167,7 +161,7 @@ func TestSetCaptureTimes_lastSunset60(t *testing.T) {
 	}
 	want := s.Sunset.Add(-60 * time.Minute)
 	wc.mu.RLock()
-	last := wc.CaptureTimes[len(wc.CaptureTimes)-1]
+	last := wc.DayLast
 	wc.mu.RUnlock()
 	if !last.Equal(want) {
 		t.Errorf("last capture: want %v, got %v", want, last)
@@ -189,7 +183,7 @@ func TestSetCaptureTimes_firstTime(t *testing.T) {
 	// 07:00 PDT (UTC-7) = 14:00 UTC on 2026-06-01
 	want := time.Date(2026, 6, 1, 14, 0, 0, 0, time.UTC)
 	wc.mu.RLock()
-	got := wc.CaptureTimes[0]
+	got := wc.DayFirst
 	wc.mu.RUnlock()
 	if !got.Equal(want) {
 		t.Errorf("first capture: want %v, got %v", want, got)
@@ -202,7 +196,7 @@ func TestSetCaptureTimes_errorOnFutureTimesRemaining(t *testing.T) {
 	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 15)
 
 	wc.mu.Lock()
-	wc.CaptureTimes = []time.Time{time.Now().Add(time.Hour)}
+	wc.NextCaptureAt = time.Now().Add(time.Hour)
 	wc.mu.Unlock()
 
 	err := wc.SetCaptureTimes(context.Background(), time.Now(), tzClient, solar)
@@ -301,7 +295,7 @@ func TestSetCaptureTimes_firstSunrise60(t *testing.T) {
 	}
 	want := s.Sunrise.Add(60 * time.Minute)
 	wc.mu.RLock()
-	got := wc.CaptureTimes[0]
+	got := wc.DayFirst
 	wc.mu.RUnlock()
 	if !got.Equal(want) {
 		t.Errorf("first capture: want %v, got %v", want, got)
@@ -320,7 +314,7 @@ func TestSetCaptureTimes_lastSunset30(t *testing.T) {
 	}
 	want := s.Sunset.Add(-30 * time.Minute)
 	wc.mu.RLock()
-	last := wc.CaptureTimes[len(wc.CaptureTimes)-1]
+	last := wc.DayLast
 	wc.mu.RUnlock()
 	if !last.Equal(want) {
 		t.Errorf("last capture: want %v, got %v", want, last)
@@ -342,7 +336,7 @@ func TestSetCaptureTimes_lastTime(t *testing.T) {
 	// 17:00 PDT (UTC-7) = 00:00 UTC on 2026-06-02
 	want := time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
 	wc.mu.RLock()
-	last := wc.CaptureTimes[len(wc.CaptureTimes)-1]
+	last := wc.DayLast
 	wc.mu.RUnlock()
 	if !last.Equal(want) {
 		t.Errorf("last capture: want %v, got %v", want, last)
@@ -389,16 +383,3 @@ func TestSetCaptureTimes_noLastFlagError(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// helpers
-// ---------------------------------------------------------------------------
-
-func assertSorted(t *testing.T, times []time.Time) {
-	t.Helper()
-	for i := 1; i < len(times); i++ {
-		if times[i].Before(times[i-1]) {
-			t.Errorf("schedule not sorted: times[%d]=%v before times[%d]=%v",
-				i, times[i], i-1, times[i-1])
-		}
-	}
-}

@@ -74,16 +74,17 @@ type Webcam struct {
 	SunriseUTC   time.Time      `json:"-"`
 	SolarNoonUTC time.Time      `json:"-"`
 	SunsetUTC    time.Time      `json:"-"`
-	CaptureTimes []time.Time    `json:"-"` // today's schedule, UTC
-	NextCapture  int            `json:"-"` // index of next future time in CaptureTimes
+	DayFirst     time.Time      `json:"-"` // first scheduled capture today (UTC)
+	DayLast      time.Time      `json:"-"` // last scheduled capture today (UTC)
+	NextCaptureAt time.Time     `json:"-"` // next pending capture (UTC); zero = done or not yet set
 	Backoff      time.Duration  `json:"-"` // exponential backoff for tier-1 outages
 	FirstFailure time.Time      `json:"-"` // when current failure streak started; zero = no streak
 	LastAttempt  time.Time      `json:"-"` // when capture was last attempted
 }
 
-// newWebcam returns an initialized Webcam with an empty capture-times slice.
+// newWebcam returns an initialized Webcam.
 func newWebcam() *Webcam {
-	return &Webcam{CaptureTimes: []time.Time{}}
+	return &Webcam{}
 }
 
 // SetFirstLastFlags derives FirstFlags and LastFlags from the First*/Last* booleans.

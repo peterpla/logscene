@@ -137,8 +137,7 @@ func TestSetFirstLastFlags_lastTimeRequiresValue(t *testing.T) {
 func TestNextCaptureTime(t *testing.T) {
 	wc := newWebcam()
 	want := time.Date(2026, 6, 1, 14, 0, 0, 0, time.UTC)
-	wc.CaptureTimes = []time.Time{want, want.Add(time.Hour)}
-	wc.NextCapture = 0
+	wc.NextCaptureAt = want
 
 	if got := wc.NextCaptureTime(); !got.Equal(want) {
 		t.Errorf("NextCaptureTime: want %v, got %v", want, got)

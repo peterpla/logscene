@@ -136,8 +136,7 @@ func TestRecordSuccess_resetsAllFields(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func scheduledInPast(wc *Webcam) {
-	wc.CaptureTimes = []time.Time{time.Now().Add(-time.Minute)}
-	wc.NextCapture = 0
+	wc.NextCaptureAt = time.Now().Add(-time.Minute)
 }
 
 func TestShouldAttemptNow_noFailureStreak(t *testing.T) {
@@ -150,8 +149,7 @@ func TestShouldAttemptNow_noFailureStreak(t *testing.T) {
 
 func TestShouldAttemptNow_captureNotYetDue(t *testing.T) {
 	wc := newWebcam()
-	wc.CaptureTimes = []time.Time{time.Now().Add(time.Hour)}
-	wc.NextCapture = 0
+	wc.NextCaptureAt = time.Now().Add(time.Hour)
 	if wc.shouldAttemptNow() {
 		t.Error("expected false when capture is in the future")
 	}
@@ -252,8 +250,7 @@ func TestAutoSuspendDue_atThreshold(t *testing.T) {
 
 func TestIsTimeForCapture_notYet(t *testing.T) {
 	wc := newWebcam()
-	wc.CaptureTimes = []time.Time{time.Now().Add(time.Hour)}
-	wc.NextCapture = 0
+	wc.NextCaptureAt = time.Now().Add(time.Hour)
 	if wc.IsTimeForCapture() {
 		t.Error("expected false when capture time is in the future")
 	}
@@ -261,19 +258,17 @@ func TestIsTimeForCapture_notYet(t *testing.T) {
 
 func TestIsTimeForCapture_past(t *testing.T) {
 	wc := newWebcam()
-	wc.CaptureTimes = []time.Time{time.Now().Add(-time.Second)}
-	wc.NextCapture = 0
+	wc.NextCaptureAt = time.Now().Add(-time.Second)
 	if !wc.IsTimeForCapture() {
 		t.Error("expected true when capture time is in the past")
 	}
 }
 
-func TestIsTimeForCapture_emptySchedule(t *testing.T) {
+func TestIsTimeForCapture_doneForToday(t *testing.T) {
 	wc := newWebcam()
-	wc.CaptureTimes = []time.Time{}
-	wc.NextCapture = 0
+	// NextCaptureAt zero means done for today or not yet scheduled.
 	if wc.IsTimeForCapture() {
-		t.Error("expected false when schedule is empty")
+		t.Error("expected false when NextCaptureAt is zero")
 	}
 }
 
@@ -290,8 +285,7 @@ func TestCaptureImage_success(t *testing.T) {
 	}
 
 	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 15)
-	wc.CaptureTimes = []time.Time{time.Date(2026, 6, 1, 13, 0, 0, 0, time.UTC)}
-	wc.NextCapture = 0
+	wc.NextCaptureAt = time.Date(2026, 6, 1, 13, 0, 0, 0, time.UTC)
 
 	key, size, err := wc.CaptureImage(context.Background(), fetcher, store, baseDir)
 	if err != nil {
@@ -315,8 +309,7 @@ func TestCaptureImage_fetchError(t *testing.T) {
 	fetcher := &mockImageFetcher{err: errors.New("connection refused")}
 
 	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 15)
-	wc.CaptureTimes = []time.Time{time.Now()}
-	wc.NextCapture = 0
+	wc.NextCaptureAt = time.Now()
 
 	_, _, err := wc.CaptureImage(context.Background(), fetcher, store, baseDir)
 	if err == nil {
@@ -336,8 +329,7 @@ func TestCaptureImage_keyUsesScheduledTime(t *testing.T) {
 	scheduled := time.Date(2026, 6, 1, 14, 30, 0, 0, time.UTC)
 	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 15)
 	wc.Name = "My Cam"
-	wc.CaptureTimes = []time.Time{scheduled}
-	wc.NextCapture = 0
+	wc.NextCaptureAt = scheduled
 
 	key, _, err := wc.CaptureImage(context.Background(), fetcher, store, baseDir)
 	if err != nil {
@@ -353,27 +345,25 @@ func TestCaptureImage_keyUsesScheduledTime(t *testing.T) {
 // UpdateNextCapture
 // ---------------------------------------------------------------------------
 
-func TestUpdateNextCapture_advancesIndex(t *testing.T) {
+func TestUpdateNextCapture_advancesOneInterval(t *testing.T) {
 	tzClient := &fixedTimezoneClient{tz: "America/Los_Angeles"}
 	solar := &fixedSolarClient{times: laFixedSolar()}
 
-	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 15)
+	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 60)
 	now := time.Now()
-	wc.CaptureTimes = []time.Time{
-		now.Add(-2 * time.Hour),
-		now.Add(-1 * time.Hour),
-		now.Add(1 * time.Hour),
-	}
-	wc.NextCapture = 0
+	wc.DayFirst = now.Add(-2 * time.Hour)
+	wc.DayLast = now.Add(4 * time.Hour)
+	wc.NextCaptureAt = now.Add(-time.Hour) // pretend we just captured this
 
-	if err := wc.UpdateNextCapture(context.Background(), now, tzClient, solar); err != nil {
+	if err := wc.UpdateNextCapture(context.Background(), tzClient, solar); err != nil {
 		t.Fatalf("UpdateNextCapture: %v", err)
 	}
 	wc.mu.RLock()
-	got := wc.NextCapture
+	got := wc.NextCaptureAt
 	wc.mu.RUnlock()
-	if got != 2 {
-		t.Errorf("NextCapture: want 2, got %d", got)
+	want := now // next interval after now-1h is now
+	if !got.Equal(want) {
+		t.Errorf("NextCaptureAt: want %v, got %v", want, got)
 	}
 }
 
@@ -403,14 +393,14 @@ func TestUpdateNextCapture_contextCancelledDuringRetry(t *testing.T) {
 	solar := &fixedSolarClient{err: errors.New("solar unavailable")}
 
 	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 15)
-	wc.CaptureTimes = []time.Time{
-		time.Now().Add(-2 * time.Hour),
-		time.Now().Add(-1 * time.Hour),
-	}
 	loc, _ := time.LoadLocation("America/Los_Angeles")
+	dayLast := time.Now().Add(-time.Hour)
 	wc.mu.Lock()
 	wc.WebcamLoc = loc
 	wc.WebcamTZ = "America/Los_Angeles"
+	wc.DayFirst = dayLast.Add(-8 * time.Hour)
+	wc.DayLast = dayLast
+	wc.NextCaptureAt = dayLast // equal to DayLast → triggers tomorrow fetch
 	wc.mu.Unlock()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -422,7 +412,7 @@ func TestUpdateNextCapture_contextCancelledDuringRetry(t *testing.T) {
 		cancel()
 	}()
 
-	err := wc.UpdateNextCapture(ctx, time.Now(), tzClient, solar)
+	err := wc.UpdateNextCapture(ctx, tzClient, solar)
 	if err == nil {
 		t.Fatal("expected error after context cancellation, got nil")
 	}
@@ -462,76 +452,44 @@ func TestUpdateNextCapture_rollsOverToTomorrow(t *testing.T) {
 	solar := &fixedSolarClient{times: laFixedSolar()}
 
 	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 15)
-	wc.CaptureTimes = []time.Time{
-		time.Now().Add(-2 * time.Hour),
-		time.Now().Add(-1 * time.Hour),
-	}
-	wc.NextCapture = 0
-
 	loc, _ := time.LoadLocation("America/Los_Angeles")
+	dayLast := time.Now().Add(-time.Hour)
 	wc.mu.Lock()
 	wc.WebcamLoc = loc
 	wc.WebcamTZ = "America/Los_Angeles"
+	wc.DayFirst = dayLast.Add(-8 * time.Hour)
+	wc.DayLast = dayLast
+	wc.NextCaptureAt = dayLast // equal to DayLast → triggers tomorrow fetch
 	wc.mu.Unlock()
 
-	if err := wc.UpdateNextCapture(context.Background(), time.Now(), tzClient, solar); err != nil {
+	if err := wc.UpdateNextCapture(context.Background(), tzClient, solar); err != nil {
 		t.Fatalf("UpdateNextCapture: %v", err)
 	}
 	wc.mu.RLock()
-	idx := wc.NextCapture
-	ct := wc.CaptureTimes
+	newDayFirst := wc.DayFirst
+	newDayLast := wc.DayLast
 	wc.mu.RUnlock()
 
-	if idx != 0 {
-		t.Errorf("NextCapture after rollover: want 0, got %d", idx)
+	// Verify that SetCaptureTimes was called for tomorrow: DayFirst/DayLast
+	// should now be the fixed solar times returned by laFixedSolar().
+	s := laFixedSolar()
+	if !newDayFirst.Equal(s.Sunrise) {
+		t.Errorf("DayFirst after rollover: want %v, got %v", s.Sunrise, newDayFirst)
 	}
-	if len(ct) < 2 {
-		t.Errorf("CaptureTimes after rollover: want ≥2, got %d", len(ct))
+	if !newDayLast.Equal(s.Sunset) {
+		t.Errorf("DayLast after rollover: want %v, got %v", s.Sunset, newDayLast)
 	}
 }
 
 // ---------------------------------------------------------------------------
-// UpdateNextCapture — unsorted CaptureTimes triggers sort branch
+// shouldAttemptNow — done for today
 // ---------------------------------------------------------------------------
 
-func TestUpdateNextCapture_sortsUnsortedCaptureTimes(t *testing.T) {
-	tzClient := &fixedTimezoneClient{tz: "America/Los_Angeles"}
-	solar := &fixedSolarClient{times: laFixedSolar()}
-
-	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 15)
-	now := time.Now()
-	// Deliberately reverse order — the sort branch must execute.
-	wc.CaptureTimes = []time.Time{
-		now.Add(2 * time.Hour),
-		now.Add(1 * time.Hour),
-		now.Add(-1 * time.Hour),
-	}
-	wc.NextCapture = 0
-
-	if err := wc.UpdateNextCapture(context.Background(), now, tzClient, solar); err != nil {
-		t.Fatalf("UpdateNextCapture: %v", err)
-	}
-	wc.mu.RLock()
-	ct := wc.CaptureTimes
-	wc.mu.RUnlock()
-	// Ascending order after sort: each element before the next.
-	for i := 1; i < len(ct); i++ {
-		if !ct[i-1].Before(ct[i]) {
-			t.Errorf("CaptureTimes not sorted at index %d", i)
-		}
-	}
-}
-
-// ---------------------------------------------------------------------------
-// shouldAttemptNow — NextCapture out-of-bounds
-// ---------------------------------------------------------------------------
-
-func TestShouldAttemptNow_nextCaptureOutOfBounds(t *testing.T) {
+func TestShouldAttemptNow_doneForToday(t *testing.T) {
 	wc := newWebcam()
-	wc.CaptureTimes = []time.Time{time.Now().Add(-time.Minute)}
-	wc.NextCapture = 99 // past end of slice
+	// NextCaptureAt zero means done for today or not yet scheduled.
 	if wc.shouldAttemptNow() {
-		t.Error("expected false when NextCapture is out of bounds")
+		t.Error("expected false when NextCaptureAt is zero")
 	}
 }
 
@@ -562,8 +520,7 @@ func TestCaptureImage_storeWriteError(t *testing.T) {
 	fetcher := &mockImageFetcher{data: []byte("img"), contentType: "image/jpeg"}
 
 	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 15)
-	wc.CaptureTimes = []time.Time{time.Now()}
-	wc.NextCapture = 0
+	wc.NextCaptureAt = time.Now()
 
 	_, _, err := wc.CaptureImage(context.Background(), fetcher, store, baseDir)
 	if err == nil {
@@ -581,17 +538,17 @@ func TestUpdateNextCapture_retriesOnTransientSolarFailure(t *testing.T) {
 	solar := &failingNTimesSolarClient{n: 1, times: laFixedSolar()}
 
 	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 15)
-	wc.CaptureTimes = []time.Time{
-		time.Now().Add(-2 * time.Hour),
-		time.Now().Add(-1 * time.Hour),
-	}
 	loc, _ := time.LoadLocation("America/Los_Angeles")
+	dayLast := time.Now().Add(-time.Hour)
 	wc.mu.Lock()
 	wc.WebcamLoc = loc
 	wc.WebcamTZ = "America/Los_Angeles"
+	wc.DayFirst = dayLast.Add(-8 * time.Hour)
+	wc.DayLast = dayLast
+	wc.NextCaptureAt = dayLast // equal to DayLast → triggers tomorrow fetch
 	wc.mu.Unlock()
 
-	if err := wc.UpdateNextCapture(context.Background(), time.Now(), tzClient, solar); err != nil {
+	if err := wc.UpdateNextCapture(context.Background(), tzClient, solar); err != nil {
 		t.Fatalf("UpdateNextCapture: %v", err)
 	}
 	if solar.calls < 2 {
@@ -623,8 +580,7 @@ func TestCaptureImage_stream(t *testing.T) {
 	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 15)
 	wc.SourceType = "stream"
 	wc.URL = tmpJPEG
-	wc.CaptureTimes = []time.Time{time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)}
-	wc.NextCapture = 0
+	wc.NextCaptureAt = time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 
 	key, size, err := wc.CaptureImage(context.Background(), nil, store, baseDir)
 	if err != nil {

@@ -2,13 +2,13 @@
 
 package main
 
-// schedule.go computes the daily ordered list of capture times for a Webcam.
+// schedule.go computes the daily capture schedule bounds for a Webcam.
 //
-// Key correctness invariant: all time.Time values in CaptureTimes are stored
-// in UTC. The webcam's timezone is used only to (a) determine the correct
-// calendar date for the solar-times API query and (b) interpret FirstTimeValue/
-// LastTimeValue clock strings. Comparisons with time.Now() are always correct
-// regardless of the timezone of the machine running this server.
+// Key correctness invariant: all time.Time values are stored in UTC. The
+// webcam's timezone is used only to (a) determine the correct calendar date
+// for the solar-times API query and (b) interpret FirstTimeValue/LastTimeValue
+// clock strings. Comparisons with time.Now() are always correct regardless of
+// the timezone of the machine running this server.
 
 import (
 	"context"
@@ -19,12 +19,15 @@ import (
 	"time"
 )
 
-// SetCaptureTimes computes and stores the full ordered capture schedule for the
-// calendar day that referenceTime falls on in the webcam's timezone.
+// SetCaptureTimes computes and stores DayFirst, DayLast, and NextCaptureAt for
+// the calendar day that referenceTime falls on in the webcam's timezone.
 //
-// It must be called when CaptureTimes is empty or all times have passed.
-// It fetches the webcam timezone via tzClient, then solar times via solarClient,
-// then builds the schedule according to the First*/Last*/Additional settings.
+// NextCaptureAt is fast-forwarded to the first scheduled time at or after
+// referenceTime — so starting up mid-day lands on the correct next slot rather
+// than replaying every missed interval from sunrise.
+//
+// It must be called when NextCaptureAt is zero or past DayLast.
+// It fetches the webcam timezone via tzClient, then solar times via solarClient.
 func (wc *Webcam) SetCaptureTimes(
 	ctx context.Context,
 	referenceTime time.Time,
@@ -34,8 +37,7 @@ func (wc *Webcam) SetCaptureTimes(
 	// Guard: refuse to overwrite a schedule that still has future times.
 	// Also read the cached timezone under the same lock to avoid a separate RLock.
 	wc.mu.RLock()
-	n := len(wc.CaptureTimes)
-	if n > 0 && time.Now().Before(wc.CaptureTimes[n-1]) {
+	if !wc.NextCaptureAt.IsZero() && wc.NextCaptureAt.After(time.Now()) {
 		wc.mu.RUnlock()
 		return fmt.Errorf("SetCaptureTimes: %q still has future capture times", wc.Name)
 	}
@@ -79,7 +81,7 @@ func (wc *Webcam) SetCaptureTimes(
 		return fmt.Errorf("SetCaptureTimes: GetSolarTimes: %w", err)
 	}
 
-	// 4. Build the schedule under the write lock.
+	// 4. Store schedule bounds under the write lock.
 	wc.mu.Lock()
 	defer wc.mu.Unlock()
 
@@ -88,7 +90,6 @@ func (wc *Webcam) SetCaptureTimes(
 	wc.SunriseUTC = solar.Sunrise
 	wc.SolarNoonUTC = solar.SolarNoon
 	wc.SunsetUTC = solar.Sunset
-	wc.CaptureTimes = wc.CaptureTimes[:0] // clear, reuse backing array
 
 	first, err := wc.firstCaptureTime(webcamNow)
 	if err != nil {
@@ -99,10 +100,13 @@ func (wc *Webcam) SetCaptureTimes(
 		return err
 	}
 
-	wc.CaptureTimes = buildSchedule(first, last, wc.IntervalMinutes)
+	wc.DayFirst = first
+	wc.DayLast = last
+	wc.NextCaptureAt = firstFutureCapture(first, last, wc.IntervalMinutes, referenceTime)
 
-	log.Printf("SetCaptureTimes: %q tz=%s captures(%d)=%v",
-		wc.Name, tz, len(wc.CaptureTimes), wc.CaptureTimes)
+	log.Printf("SetCaptureTimes: %q tz=%s dayFirst=%s dayLast=%s nextCaptureAt=%s",
+		wc.Name, tz, first.UTC().Format("15:04:05"), last.UTC().Format("15:04:05"),
+		wc.NextCaptureAt.UTC().Format("15:04:05"))
 	return nil
 }
 
@@ -157,17 +161,20 @@ func parseTimeOfDay(hhMM string, webcamNow time.Time, loc *time.Location) (time.
 	return t.UTC(), nil
 }
 
-// buildSchedule returns the full ordered capture schedule.
-// It starts at first, steps forward by intervalMinutes until reaching or
-// passing last, then appends last as the final entry.
-func buildSchedule(first, last time.Time, intervalMinutes int) []time.Time {
-	times := []time.Time{first}
-	step := time.Duration(intervalMinutes) * time.Minute
-	for t := first.Add(step); t.Before(last); t = t.Add(step) {
-		times = append(times, t)
+// firstFutureCapture returns the first scheduled capture at or after now.
+// Returns zero time if now is past last (done for today).
+func firstFutureCapture(first, last time.Time, intervalMinutes int, now time.Time) time.Time {
+	if !now.After(first) {
+		return first
 	}
-	if !last.Equal(first) {
-		times = append(times, last)
+	if !now.Before(last) {
+		return time.Time{} // past last capture — done for today
 	}
-	return times
+	interval := time.Duration(intervalMinutes) * time.Minute
+	n := int64(now.Sub(first))/int64(interval) + 1
+	next := first.Add(time.Duration(n) * interval)
+	if next.After(last) {
+		return last
+	}
+	return next
 }
