@@ -1,4 +1,4 @@
-BINARY    := logscene
+BINARY    := logscene.exe
 SRC       := .
 LOGDIR    := $(LOGSCENE_LOGDIR)
 VERSION   := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
