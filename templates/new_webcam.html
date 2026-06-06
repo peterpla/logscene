@@ -272,15 +272,8 @@
 </form>
 
 <script>
-  // ── Tooltip init ────────────────────────────────────────────────
-  document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function(el) {
-    new bootstrap.Tooltip(el);
-  });
-
-  // ── Source type ──────────────────────────────────────────────────
-  document.querySelectorAll('input[name="sourceType"]').forEach(function(r) {
-    r.addEventListener('change', function() { applySourceType(this.value); });
-  });
+  // Functions referenced by onclick attributes must be global (not inside DOMContentLoaded).
+  var imageBytesOverride = 0;
 
   function applySourceType(type) {
     document.getElementById('urlSection').style.display  = type !== 'usb' ? '' : 'none';
@@ -310,38 +303,6 @@
         sel.innerHTML = '<option value="">Error scanning — try again</option>';
       });
   }
-
-  // ── First / Last fixed-time toggles ─────────────────────────────
-  document.querySelectorAll('input[name="firstOption"]').forEach(function(r) {
-    r.addEventListener('change', function() {
-      document.getElementById('firstTimeSection').style.display =
-        this.value === 'firstTime' ? '' : 'none';
-    });
-  });
-  document.querySelectorAll('input[name="lastOption"]').forEach(function(r) {
-    r.addEventListener('change', function() {
-      document.getElementById('lastTimeSection').style.display =
-        this.value === 'lastTime' ? '' : 'none';
-    });
-  });
-
-  // ── Interval presets ─────────────────────────────────────────────
-  var imageBytesOverride = 0; // set by Test shot
-
-  document.querySelectorAll('input[name="intervalPreset"]').forEach(function(r) {
-    r.addEventListener('change', function() {
-      var custom = this.value === 'custom';
-      document.getElementById('customIntervalSection').style.display = custom ? '' : 'none';
-      if (!custom) {
-        document.getElementById('intervalMinutes').value = this.value;
-        updateStats(parseInt(this.value));
-        updateDemoVideo(parseInt(this.value));
-      }
-    });
-  });
-
-  document.getElementById('customValue').addEventListener('input', applyCustomInterval);
-  document.getElementById('customUnit').addEventListener('change', applyCustomInterval);
 
   function applyCustomInterval() {
     var mins = parseInt(document.getElementById('customValue').value) *
@@ -381,7 +342,6 @@
     document.getElementById('demoVideo').load();
   }
 
-  // ── Test shot ────────────────────────────────────────────────────
   function doTestShot() {
     var url = document.getElementById('webcamUrl').value.trim();
     if (!url) {
@@ -416,23 +376,64 @@
     });
   }
 
-  // ── Storage folder auto-fix on blur ──────────────────────────────
-  document.getElementById('folder').addEventListener('blur', function() {
-    var raw = this.value;
-    var fixed = raw.toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '');
-    if (fixed !== raw) {
-      this.value = fixed;
-      document.getElementById('folderHint').textContent =
-        'Adjusted to: ' + fixed;
-    } else {
-      document.getElementById('folderHint').textContent = '';
-    }
-  });
+  // Bootstrap (loaded at bottom of <body>) is available by DOMContentLoaded time.
+  document.addEventListener('DOMContentLoaded', function() {
+    // ── Tooltip init ──────────────────────────────────────────────
+    document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function(el) {
+      new bootstrap.Tooltip(el);
+    });
 
-  // Init stats for default selection (15 min)
-  updateStats(15);
+    // ── Source type ───────────────────────────────────────────────
+    document.querySelectorAll('input[name="sourceType"]').forEach(function(r) {
+      r.addEventListener('change', function() { applySourceType(this.value); });
+    });
+
+    // ── First / Last fixed-time toggles ──────────────────────────
+    document.querySelectorAll('input[name="firstOption"]').forEach(function(r) {
+      r.addEventListener('change', function() {
+        document.getElementById('firstTimeSection').style.display =
+          this.value === 'firstTime' ? '' : 'none';
+      });
+    });
+    document.querySelectorAll('input[name="lastOption"]').forEach(function(r) {
+      r.addEventListener('change', function() {
+        document.getElementById('lastTimeSection').style.display =
+          this.value === 'lastTime' ? '' : 'none';
+      });
+    });
+
+    // ── Interval presets ──────────────────────────────────────────
+    document.querySelectorAll('input[name="intervalPreset"]').forEach(function(r) {
+      r.addEventListener('change', function() {
+        var custom = this.value === 'custom';
+        document.getElementById('customIntervalSection').style.display = custom ? '' : 'none';
+        if (!custom) {
+          document.getElementById('intervalMinutes').value = this.value;
+          updateStats(parseInt(this.value));
+          updateDemoVideo(parseInt(this.value));
+        }
+      });
+    });
+    document.getElementById('customValue').addEventListener('input', applyCustomInterval);
+    document.getElementById('customUnit').addEventListener('change', applyCustomInterval);
+
+    // ── Storage folder auto-fix on blur ───────────────────────────
+    document.getElementById('folder').addEventListener('blur', function() {
+      var raw = this.value;
+      var fixed = raw.toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+      if (fixed !== raw) {
+        this.value = fixed;
+        document.getElementById('folderHint').textContent = 'Adjusted to: ' + fixed;
+      } else {
+        document.getElementById('folderHint').textContent = '';
+      }
+    });
+
+    // Init stats for default selection (15 min)
+    updateStats(15);
+  });
 </script>
 
 {{end}}
