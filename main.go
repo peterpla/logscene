@@ -15,7 +15,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -54,6 +53,10 @@ type server struct {
 var currentLogFile *os.File
 
 func main() {
+	if !ensureSingleInstance() {
+		return
+	}
+
 	srv := newServer()
 
 	path := filepath.Join(srv.config.Path, masterFile)
@@ -69,17 +72,24 @@ func main() {
 	srv.wg.Add(1)
 	go newDayMaintenance(srv.ctx, srv)
 
-	// Launch one capture goroutine per webcam.
-	// Sleep 2 s between launches to respect timezonedb.com's 1 req/s rate limit.
-	if srv.trial.capturesStopped() {
-		log.Printf("main: trial %s — captures disabled", srv.trial)
-	} else {
+	// Launch capture goroutines in the background so the UI window can open
+	// immediately. The 2 s sleep between launches respects timezonedb.com's
+	// 1 req/s rate limit. launchWg ensures all webcamWg.Add calls complete
+	// before webcamWg.Wait is called during shutdown.
+	var launchWg sync.WaitGroup
+	launchWg.Add(1)
+	go func() {
+		defer launchWg.Done()
+		if srv.trial.capturesStopped() {
+			log.Printf("main: trial %s — captures disabled", srv.trial)
+			return
+		}
 		for _, wc := range *srv.webcams {
 			srv.webcamWg.Add(1)
 			go capture(srv.webcamCtx, wc, time.Duration(srv.config.PollSecs)*time.Second, srv)
 			time.Sleep(2 * time.Second)
 		}
-	}
+	}()
 
 	if err := srv.initTemplates(); err != nil {
 		log.Fatalf("main: initTemplates: %v", err)
@@ -114,14 +124,10 @@ func main() {
 	go startListening(hs)
 	go printStartupSummary(srv.config.Port)
 
-	// Block until SIGINT.
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt)
-	sig := <-c
-	log.Printf("main: received %s, shutting down", sig)
-
-	signal.Stop(c)
+	runUI(srv.config.Port)
+	log.Printf("main: shutting down")
 	srv.cancel()
+	launchWg.Wait() // ensure all webcamWg.Add calls complete before Wait
 	srv.webcamWg.Wait()
 	srv.wg.Wait()
 

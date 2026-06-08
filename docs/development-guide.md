@@ -27,7 +27,7 @@ platform:
 | `make logs` | ✓ (PowerShell) | ✗ |
 | `make deploy-wp` / `make deploy-staging` | ✓ (WinSCP required) | ✗ |
 | Windows Registry (trial state, license key storage) | ✓ | ✗ |
-| WebView2 wrapper (native app window) | ✓ | ✗ |
+| WebView2 wrapper (native app window) | ✓ (requires MSYS2/mingw-w64 for CGo) | ✗ |
 | Running the compiled app | ✓ | ✗ |
 
 A developer working on a Mac can contribute to Go backend logic, WordPress plugin code,
@@ -103,7 +103,20 @@ custom WordPress plugin without touching the live or staging site.
 - Verify libsodium is available: in the Local site's PHP shell, run
   `php -r "var_dump(extension_loaded('sodium'));"`  — should return `bool(true)`
 
-### 7. Make
+### 7. MSYS2 / mingw-w64 (Windows only — required for CGo/WebView2)
+
+The WebView2 wrapper (`webview_windows.go`) uses CGo via `jchv/go-webview2`. Building
+on Windows requires a C compiler from the mingw-w64 toolchain.
+
+- Install MSYS2 from https://www.msys2.org/ (or via `winget install MSYS2.MSYS2`)
+- In an MSYS2 terminal, run: `pacman -S --noconfirm mingw-w64-x86_64-gcc`
+- Add `C:\msys64\mingw64\bin` to your Windows `PATH` environment variable
+- Verify: `gcc --version`
+
+Without this, `go build` and `go test` will fail on Windows with a CGo-related error.
+Non-Windows builds use `webview_stub.go` (no CGo required).
+
+### 8. Make
 
 - Windows: install via [Chocolatey](https://chocolatey.org/) (`choco install make`)
   or [Scoop](https://scoop.sh/) (`scoop install make`), or use Git Bash which
