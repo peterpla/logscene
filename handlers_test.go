@@ -164,20 +164,35 @@ func TestHandleNext_withCapture(t *testing.T) {
 
 func TestHandleLogs_notFound(t *testing.T) {
 	srv := newTestServer(t)
+	if err := srv.initTemplates(); err != nil {
+		t.Fatalf("initTemplates: %v", err)
+	}
 	srv.router.GET("/logs", srv.handleLogs())
 	// LogDir points at an empty temp dir — no log file exists yet.
 
-	req := httptest.NewRequest(http.MethodGet, "/logs", nil)
-	w := httptest.NewRecorder()
-	srv.router.ServeHTTP(w, req)
+	_, body := getBody(t, srv, "/logs")
+	assertHTML(t, body, "No log file for today yet")
+}
 
-	if w.Code != http.StatusNotFound {
-		t.Errorf("want 404, got %d", w.Code)
+func TestHandleLogs_hasNavigation(t *testing.T) {
+	srv := newTestServer(t)
+	if err := srv.initTemplates(); err != nil {
+		t.Fatalf("initTemplates: %v", err)
 	}
+	srv.router.GET("/logs", srv.handleLogs())
+
+	_, body := getBody(t, srv, "/logs")
+	assertHTML(t, body, `href="/"`)        // sidebar Dashboard link
+	assertHTML(t, body, `href="/new"`)     // sidebar Add Webcam link
+	assertHTML(t, body, "LogScene")        // app title in sidebar
+	assertHTML(t, body, `class="nav-link active"`) // Logs nav item is active
 }
 
 func TestHandleLogs_returnsLines(t *testing.T) {
 	srv := newTestServer(t)
+	if err := srv.initTemplates(); err != nil {
+		t.Fatalf("initTemplates: %v", err)
+	}
 	srv.router.GET("/logs", srv.handleLogs())
 
 	// Write a fake log file named for today.
@@ -204,6 +219,9 @@ func TestHandleLogs_returnsLines(t *testing.T) {
 
 func TestHandleLogs_nParam(t *testing.T) {
 	srv := newTestServer(t)
+	if err := srv.initTemplates(); err != nil {
+		t.Fatalf("initTemplates: %v", err)
+	}
 	srv.router.GET("/logs", srv.handleLogs())
 
 	// Write 10 lines; request only the last 3.
@@ -494,6 +512,89 @@ func TestHandleNew_success(t *testing.T) {
 	srv.mu.RUnlock()
 	if n != 1 {
 		t.Errorf("want 1 webcam appended, got %d", n)
+	}
+}
+
+func TestHandleNew_radioButtonPaths(t *testing.T) {
+	cases := []struct {
+		name           string
+		firstOption    string
+		firstTimeValue string
+		lastOption     string
+		lastTimeValue  string
+		wantFirst      func(*Webcam) bool
+		wantLast       func(*Webcam) bool
+	}{
+		{
+			name:        "firstSunrise+lastSunset",
+			firstOption: "firstSunrise", lastOption: "lastSunset",
+			wantFirst: func(wc *Webcam) bool { return wc.FirstSunrise && !wc.FirstSunrise30 && !wc.FirstSunrise60 && !wc.FirstTime },
+			wantLast:  func(wc *Webcam) bool { return wc.LastSunset && !wc.LastSunset30 && !wc.LastSunset60 && !wc.LastTime },
+		},
+		{
+			name:        "firstSunrise30+lastSunset30",
+			firstOption: "firstSunrise30", lastOption: "lastSunset30",
+			wantFirst: func(wc *Webcam) bool { return !wc.FirstSunrise && wc.FirstSunrise30 && !wc.FirstSunrise60 && !wc.FirstTime },
+			wantLast:  func(wc *Webcam) bool { return !wc.LastSunset && wc.LastSunset30 && !wc.LastSunset60 && !wc.LastTime },
+		},
+		{
+			name:        "firstSunrise60+lastSunset60",
+			firstOption: "firstSunrise60", lastOption: "lastSunset60",
+			wantFirst: func(wc *Webcam) bool { return !wc.FirstSunrise && !wc.FirstSunrise30 && wc.FirstSunrise60 && !wc.FirstTime },
+			wantLast:  func(wc *Webcam) bool { return !wc.LastSunset && !wc.LastSunset30 && wc.LastSunset60 && !wc.LastTime },
+		},
+		{
+			name:           "firstTime+lastTime",
+			firstOption:    "firstTime", firstTimeValue: "07:00",
+			lastOption:     "lastTime", lastTimeValue: "18:00",
+			wantFirst: func(wc *Webcam) bool { return !wc.FirstSunrise && !wc.FirstSunrise30 && !wc.FirstSunrise60 && wc.FirstTime },
+			wantLast:  func(wc *Webcam) bool { return !wc.LastSunset && !wc.LastSunset30 && !wc.LastSunset60 && wc.LastTime },
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := newTestServer(t)
+			srv.router.POST("/new", srv.handleNew())
+
+			form := url.Values{}
+			form.Set("name", "Test Cam")
+			form.Set("webcamUrl", "http://example.com/cam.jpg")
+			form.Set("latitude", "37.77")
+			form.Set("longitude", "-122.42")
+			form.Set("intervalMinutes", "15")
+			form.Set("folder", "test-cam")
+			form.Set("firstOption", tc.firstOption)
+			form.Set("lastOption", tc.lastOption)
+			if tc.firstTimeValue != "" {
+				form.Set("firstTimeValue", tc.firstTimeValue)
+			}
+			if tc.lastTimeValue != "" {
+				form.Set("lastTimeValue", tc.lastTimeValue)
+			}
+
+			req := httptest.NewRequest(http.MethodPost, "/new", strings.NewReader(form.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			w := httptest.NewRecorder()
+			srv.router.ServeHTTP(w, req)
+
+			if w.Code != http.StatusSeeOther {
+				t.Fatalf("want 303, got %d: %s", w.Code, w.Body.String())
+			}
+
+			srv.mu.RLock()
+			wc := (*srv.webcams)[0]
+			srv.mu.RUnlock()
+
+			if !tc.wantFirst(wc) {
+				t.Errorf("firstOption=%q: unexpected flags: Sunrise=%v Sunrise30=%v Sunrise60=%v Time=%v",
+					tc.firstOption, wc.FirstSunrise, wc.FirstSunrise30, wc.FirstSunrise60, wc.FirstTime)
+			}
+			if !tc.wantLast(wc) {
+				t.Errorf("lastOption=%q: unexpected flags: Sunset=%v Sunset30=%v Sunset60=%v Time=%v",
+					tc.lastOption, wc.LastSunset, wc.LastSunset30, wc.LastSunset60, wc.LastTime)
+			}
+		})
 	}
 }
 

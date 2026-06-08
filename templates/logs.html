@@ -1,0 +1,11 @@
+{{define "content"}}
+<h5 class="mb-4">Logs</h5>
+
+{{if .NotFound}}
+<div class="alert alert-secondary" role="alert">
+  No log file for today yet.
+</div>
+{{else}}
+<pre class="bg-dark text-light p-3 rounded small" style="white-space: pre-wrap; word-break: break-all;">{{.LogLines}}</pre>
+{{end}}
+{{end}}

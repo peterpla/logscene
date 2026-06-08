@@ -33,6 +33,7 @@ type server struct {
 	tmplDashboard *template.Template
 	tmplNewWebcam *template.Template
 	tmplLatlong   *template.Template
+	tmplLogs      *template.Template
 	webcams      *Webcams       // all configured webcams; protected by mu
 	storage      Storage
 	renderer     Renderer

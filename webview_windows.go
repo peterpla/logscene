@@ -76,6 +76,7 @@ func runUI(port string) {
 
 	w.SetTitle("LogScene")
 	w.SetSize(1280, 800, webview.HintNone)
+	w.Init("document.addEventListener('contextmenu', function(e) { e.preventDefault(); });")
 	w.Navigate("http://127.0.0.1:" + port)
 
 	// Allow Ctrl-C from the terminal to close the window cleanly.

@@ -324,9 +324,8 @@ func (s *server) handleNext() httprouter.Handle {
 	}
 }
 
-// handleLogs returns the last n lines of today's log file as plain text.
+// handleLogs renders the last n lines of today's log file inside the base layout.
 // The number of lines can be controlled with the ?n= query parameter (default 20).
-// Useful when the server is running remotely and stdout is not accessible.
 func (s *server) handleLogs() httprouter.Handle {
 	return func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 		n := 20
@@ -336,20 +335,28 @@ func (s *server) handleLogs() httprouter.Handle {
 			}
 		}
 
+		var logLines string
 		logPath := filepath.Join(s.config.LogDir, "logscene-"+time.Now().Format("2006-01-02")+".log")
-		data, err := os.ReadFile(logPath)
-		if err != nil {
-			http.Error(w, "log file not available: "+err.Error(), http.StatusNotFound)
-			return
+		raw, err := os.ReadFile(logPath)
+		if err == nil {
+			lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+			if len(lines) > n {
+				lines = lines[len(lines)-n:]
+			}
+			logLines = strings.Join(lines, "\n")
 		}
 
-		lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
-		if len(lines) > n {
-			lines = lines[len(lines)-n:]
+		data := struct {
+			Page     string
+			Title    string
+			Trial    TrialState
+			LogLines string
+			NotFound bool
+		}{"logs", "Logs", s.trial, logLines, err != nil}
+		if err := s.tmplLogs.ExecuteTemplate(w, "base", data); err != nil {
+			log.Printf("handleLogs: %v", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
-
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		fmt.Fprintln(w, strings.Join(lines, "\n"))
 	}
 }
 
@@ -639,6 +646,9 @@ func (s *server) initTemplates() error {
 		return err
 	}
 	if s.tmplLatlong, err = parse("latlong"); err != nil {
+		return err
+	}
+	if s.tmplLogs, err = parse("logs"); err != nil {
 		return err
 	}
 	return nil

@@ -5,16 +5,6 @@ Run this checklist before any release that touches the affected areas.
 
 ---
 
-## Render Modal (dashboard.html)
-
-**Covered by automated browser tests** (`browser_test.go`, `TestBrowser_renderModal_*`
-via chromedp/Edge). No manual verification required unless the browser test suite
-is disabled or the modal JS is changed in a way not yet reflected in those tests.
-
-To run: `go test -tags integration -run TestBrowser_renderModal ./...`
-
----
-
 ## WebView2 Window (webview_windows.go)
 
 ### First launch
