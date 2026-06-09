@@ -10,13 +10,19 @@ package main
 //	0 – 24 h      exponential backoff, capped at 10 min  (tier 1)
 //	24 h – 2 d    retry once per hour                    (tier 2)
 //	2 d – 2 weeks retry once per day                     (tier 3)
-//	> 2 weeks     auto-suspend: goroutine exits with a   (tier 4)
-//	              prominent log message; set
-//	              "disabled": true in logscene.json to
-//	              suppress on restart, or restart the
-//	              server to try again.
+//	> 2 weeks     auto-suspend: goroutine exits           (tier 4)
 //
 // On success at any tier, all failure tracking resets immediately.
+//
+// Auto-suspend (tier 4) triggers an in-app modal offering two choices:
+//   - Disable: sets Disabled=true in logscene.json; status indicator goes red.
+//   - Keep Trying: schedules a fresh goroutine start at the next idle window
+//     with all backoff state cleared. If failures continue for another 2 weeks,
+//     the modal appears again.
+//
+// Idle window: the period after DayLast and before DayFirst the following day,
+// when no captures are scheduled. Goroutine restarts are initiated during this
+// window to avoid interrupting active capture schedules.
 
 import (
 	"bytes"
