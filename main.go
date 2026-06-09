@@ -13,6 +13,7 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -51,7 +52,47 @@ type server struct {
 	trial        TrialState
 }
 
-var currentLogFile *os.File
+var (
+	currentLogFile      *os.File
+	currentDebugLogFile *os.File
+)
+
+// multiHandler fans a single slog.Record out to multiple slog.Handler instances.
+type multiHandler struct{ handlers []slog.Handler }
+
+func (h *multiHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	for _, hh := range h.handlers {
+		if hh.Enabled(ctx, level) {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *multiHandler) Handle(ctx context.Context, r slog.Record) error {
+	for _, hh := range h.handlers {
+		if hh.Enabled(ctx, r.Level) {
+			_ = hh.Handle(ctx, r.Clone())
+		}
+	}
+	return nil
+}
+
+func (h *multiHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	hs := make([]slog.Handler, len(h.handlers))
+	for i, hh := range h.handlers {
+		hs[i] = hh.WithAttrs(attrs)
+	}
+	return &multiHandler{handlers: hs}
+}
+
+func (h *multiHandler) WithGroup(name string) slog.Handler {
+	hs := make([]slog.Handler, len(h.handlers))
+	for i, hh := range h.handlers {
+		hs[i] = hh.WithGroup(name)
+	}
+	return &multiHandler{handlers: hs}
+}
 
 func main() {
 	if !ensureSingleInstance() {
@@ -240,11 +281,13 @@ func newDayMaintenance(ctx context.Context, srv *server) {
 }
 
 // openLogFile opens (or creates) a dated log file, redirects the standard
-// logger to it, and closes the previous log file.
+// logger to it, closes the previous log file, and reconfigures slog with a
+// TextHandler (user-facing, Info+) and a JSONHandler (debug, Debug+).
 func openLogFile(logDir string, date time.Time) error {
 	if err := os.MkdirAll(logDir, 0755); err != nil {
 		return fmt.Errorf("openLogFile: MkdirAll %s: %w", logDir, err)
 	}
+
 	name := filepath.Join(logDir, "logscene-"+date.Format("2006-01-02")+".log")
 	f, err := os.OpenFile(name, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
@@ -255,6 +298,28 @@ func openLogFile(logDir string, date time.Time) error {
 		currentLogFile.Close()
 	}
 	currentLogFile = f
+
+	// Open debug log (non-fatal: support bundle is best-effort).
+	debugName := filepath.Join(logDir, "logscene-debug-"+date.Format("2006-01-02")+".log")
+	df, debugErr := os.OpenFile(debugName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if debugErr != nil {
+		log.Printf("openLogFile: cannot open debug log %s: %v", debugName, debugErr)
+	} else {
+		if currentDebugLogFile != nil {
+			currentDebugLogFile.Close()
+		}
+		currentDebugLogFile = df
+	}
+
+	// Wire slog: Info+ to user log; Debug+ to debug log (if open).
+	userHandler := slog.NewTextHandler(f, &slog.HandlerOptions{Level: slog.LevelInfo})
+	var h slog.Handler = userHandler
+	if currentDebugLogFile != nil {
+		debugHandler := slog.NewJSONHandler(currentDebugLogFile, &slog.HandlerOptions{Level: slog.LevelDebug})
+		h = &multiHandler{handlers: []slog.Handler{userHandler, debugHandler}}
+	}
+	slog.SetDefault(slog.New(h))
+
 	log.Printf("openLogFile: logging to %s", name)
 	return nil
 }

@@ -7,6 +7,7 @@ package main
 import (
 	"io"
 	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,12 +22,19 @@ func TestOpenLogFile(t *testing.T) {
 	// Capture and restore log state around the test.
 	origWriter := log.Writer()
 	origLogFile := currentLogFile
+	origDebugLogFile := currentDebugLogFile
+	origSlog := slog.Default()
 	t.Cleanup(func() {
 		log.SetOutput(origWriter)
 		if f := currentLogFile; f != nil && f != origLogFile {
 			f.Close()
 		}
 		currentLogFile = origLogFile
+		if f := currentDebugLogFile; f != nil && f != origDebugLogFile {
+			f.Close()
+		}
+		currentDebugLogFile = origDebugLogFile
+		slog.SetDefault(origSlog)
 	})
 
 	if err := openLogFile(dir, date); err != nil {
@@ -36,6 +44,10 @@ func TestOpenLogFile(t *testing.T) {
 	expected := filepath.Join(dir, "logscene-2026-06-01.log")
 	if _, err := os.Stat(expected); err != nil {
 		t.Fatalf("log file not created: %v", err)
+	}
+	debugExpected := filepath.Join(dir, "logscene-debug-2026-06-01.log")
+	if _, err := os.Stat(debugExpected); err != nil {
+		t.Fatalf("debug log file not created: %v", err)
 	}
 
 	// Confirm the standard logger now writes to the new file.
@@ -55,12 +67,19 @@ func TestOpenLogFile_rotatesFile(t *testing.T) {
 
 	origWriter := log.Writer()
 	origLogFile := currentLogFile
+	origDebugLogFile := currentDebugLogFile
+	origSlog := slog.Default()
 	t.Cleanup(func() {
 		log.SetOutput(origWriter)
 		if f := currentLogFile; f != nil && f != origLogFile {
 			f.Close()
 		}
 		currentLogFile = origLogFile
+		if f := currentDebugLogFile; f != nil && f != origDebugLogFile {
+			f.Close()
+		}
+		currentDebugLogFile = origDebugLogFile
+		slog.SetDefault(origSlog)
 	})
 
 	// Open a first log file, then a second — should close the first.
@@ -115,12 +134,70 @@ func TestOpenLogFile_openFileError(t *testing.T) {
 
 	origWriter := log.Writer()
 	origLogFile := currentLogFile
+	origDebugLogFile := currentDebugLogFile
+	origSlog := slog.Default()
 	t.Cleanup(func() {
 		log.SetOutput(origWriter)
 		currentLogFile = origLogFile
+		currentDebugLogFile = origDebugLogFile
+		slog.SetDefault(origSlog)
 	})
 
 	if err := openLogFile(dir, date); err == nil {
 		t.Error("expected error when log file path is a directory, got nil")
+	}
+}
+
+func TestOpenLogFile_slogHandlers(t *testing.T) {
+	dir := t.TempDir()
+	date := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+
+	origWriter := log.Writer()
+	origLogFile := currentLogFile
+	origDebugLogFile := currentDebugLogFile
+	origSlog := slog.Default()
+	t.Cleanup(func() {
+		log.SetOutput(origWriter)
+		if f := currentLogFile; f != nil && f != origLogFile {
+			f.Close()
+		}
+		currentLogFile = origLogFile
+		if f := currentDebugLogFile; f != nil && f != origDebugLogFile {
+			f.Close()
+		}
+		currentDebugLogFile = origDebugLogFile
+		slog.SetDefault(origSlog)
+	})
+
+	if err := openLogFile(dir, date); err != nil {
+		t.Fatalf("openLogFile: %v", err)
+	}
+
+	userLogPath := filepath.Join(dir, "logscene-2026-06-01.log")
+	debugLogPath := filepath.Join(dir, "logscene-debug-2026-06-01.log")
+
+	slog.Info("info-sentinel")
+	slog.Debug("debug-sentinel")
+
+	userLog, err := os.ReadFile(userLogPath)
+	if err != nil {
+		t.Fatalf("read user log: %v", err)
+	}
+	debugLog, err := os.ReadFile(debugLogPath)
+	if err != nil {
+		t.Fatalf("read debug log: %v", err)
+	}
+
+	if !strings.Contains(string(userLog), "info-sentinel") {
+		t.Errorf("user log missing info-sentinel:\n%s", userLog)
+	}
+	if strings.Contains(string(userLog), "debug-sentinel") {
+		t.Errorf("user log should not contain debug-sentinel (filtered at Info level):\n%s", userLog)
+	}
+	if !strings.Contains(string(debugLog), "debug-sentinel") {
+		t.Errorf("debug log missing debug-sentinel:\n%s", debugLog)
+	}
+	if !strings.Contains(string(debugLog), "info-sentinel") {
+		t.Errorf("debug log missing info-sentinel (debug handler captures all levels):\n%s", debugLog)
 	}
 }
