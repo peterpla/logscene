@@ -37,10 +37,11 @@ type webcamCardData struct {
 
 // dashboardData is the template context for the dashboard page.
 type dashboardData struct {
-	Page    string
-	Title   string
-	Trial   TrialState
-	Webcams []webcamCardData
+	Page       string
+	Title      string
+	Trial      TrialState
+	Webcams    []webcamCardData
+	RendersDir string // OS-native path to BaseDir/renders for display in render modal
 }
 
 // newWebcamData is the template context for the add-webcam form.
@@ -162,10 +163,11 @@ func (s *server) handleHome() httprouter.Handle {
 		s.mu.RUnlock()
 
 		data := dashboardData{
-			Page:    "dashboard",
-			Title:   "Dashboard",
-			Trial:   trial,
-			Webcams: cards,
+			Page:       "dashboard",
+			Title:      "Dashboard",
+			Trial:      trial,
+			Webcams:    cards,
+			RendersDir: filepath.Join(filepath.FromSlash(s.config.BaseDir), "renders"),
 		}
 		if err := s.tmplDashboard.ExecuteTemplate(w, "base", data); err != nil {
 			slog.Debug("template execution error", "handler", "handleHome", "failure_class", fcInternalError, "error", err)
@@ -471,7 +473,16 @@ func (s *server) handleRender() httprouter.Handle {
 			return
 		}
 
-		dir := filepath.Join(s.config.BaseDir, req.Folder)
+		rendersDir := filepath.Join(filepath.FromSlash(s.config.BaseDir), "renders")
+		if err := os.MkdirAll(rendersDir, 0755); err != nil {
+			slog.Info("renders directory could not be created", "path", rendersDir)
+			slog.Debug("handleRender: MkdirAll failed", "path", rendersDir, "failure_class", fcFilesystem, "error", err)
+			http.Error(w, "could not create renders directory", http.StatusInternalServerError)
+			return
+		}
+
+		dir := filepath.Join(filepath.FromSlash(s.config.BaseDir), req.Folder)
+		fullOutput := filepath.Join(rendersDir, filepath.Base(req.Output))
 		opts := RenderOptions{
 			FPS:       req.FPS,
 			StartDate: strings.ReplaceAll(req.Start, "-", ""),
@@ -481,9 +492,9 @@ func (s *server) handleRender() httprouter.Handle {
 
 		ctx := s.ctx
 		go func() {
-			if err := s.renderer.Render(ctx, dir, req.Output, opts); err != nil {
-				slog.Info("render failed", "webcam", req.Folder, "output", req.Output)
-				slog.Debug("handleRender: render failed", "webcam", req.Folder, "output", req.Output, "failure_class", fcRenderFailure, "error", err)
+			if err := s.renderer.Render(ctx, dir, fullOutput, opts); err != nil {
+				slog.Info("render failed", "webcam", req.Folder, "output", fullOutput)
+				slog.Debug("handleRender: render failed", "webcam", req.Folder, "output", fullOutput, "failure_class", fcRenderFailure, "error", err)
 			}
 		}()
 
@@ -491,7 +502,7 @@ func (s *server) handleRender() httprouter.Handle {
 		json.NewEncoder(w).Encode(struct {
 			Status string `json:"status"`
 			Output string `json:"output"`
-		}{"rendering", req.Output})
+		}{"rendering", fullOutput})
 	}
 }
 

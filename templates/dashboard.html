@@ -51,7 +51,8 @@
 {{end}}
 
 <!-- Render modal -->
-<div class="modal fade" id="renderModal" tabindex="-1" aria-labelledby="renderModalLabel" aria-hidden="true">
+<div class="modal fade" id="renderModal" tabindex="-1" aria-labelledby="renderModalLabel" aria-hidden="true"
+     data-renders-dir="{{.RendersDir}}">
   <div class="modal-dialog">
     <div class="modal-content">
       <div class="modal-header">
@@ -62,6 +63,7 @@
         <div class="mb-3">
           <label for="renderOutput" class="form-label">Output filename</label>
           <input type="text" class="form-control" id="renderOutput" placeholder="output.mp4">
+          <div class="form-text" id="renderOutputPath"></div>
         </div>
         <div class="row g-2 mb-3">
           <div class="col">
@@ -116,6 +118,15 @@
     return 'Every ' + stride + suffix + ' capture (' + mins + ')';
   }
 
+  function updateOutputPath() {
+    var dir = document.getElementById('renderModal').dataset.rendersDir || '';
+    var filename = document.getElementById('renderOutput').value.trim();
+    var el = document.getElementById('renderOutputPath');
+    if (!filename || !dir) { el.textContent = ''; return; }
+    var sep = dir.indexOf('\\') !== -1 ? '\\' : '/';
+    el.textContent = 'Saved to: ' + dir + sep + filename;
+  }
+
   function updateRenderEstimate() {
     var modal = document.getElementById('renderModal');
     var intervalMins = modal._interval || 15;
@@ -149,6 +160,7 @@
     document.getElementById('renderOutput').value = this._folder + '.mp4';
     document.getElementById('renderStatus').textContent = '';
     document.getElementById('renderSubmit').disabled = false;
+    updateOutputPath();
 
     var sel = document.getElementById('renderStride');
     sel.innerHTML = '';
@@ -162,6 +174,7 @@
     updateRenderEstimate();
   });
 
+  document.getElementById('renderOutput').addEventListener('input', updateOutputPath);
   document.getElementById('renderStride').addEventListener('change', updateRenderEstimate);
   document.getElementById('renderStart').addEventListener('change', updateRenderEstimate);
   document.getElementById('renderEnd').addEventListener('change', updateRenderEstimate);
@@ -190,7 +203,7 @@
     })
     .then(function(r) { return r.json(); })
     .then(function(data) {
-      document.getElementById('renderStatus').textContent = 'Rendering started: ' + data.output;
+      document.getElementById('renderStatus').textContent = 'Rendering started — saved to: ' + data.output;
       document.getElementById('renderSubmit').disabled = true;
     })
     .catch(function(err) {

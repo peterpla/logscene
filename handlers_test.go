@@ -713,8 +713,8 @@ func TestHandleRender_success(t *testing.T) {
 	if resp.Status != "rendering" {
 		t.Errorf("status: want %q, got %q", "rendering", resp.Status)
 	}
-	if resp.Output != "output.mp4" {
-		t.Errorf("output: want %q, got %q", "output.mp4", resp.Output)
+	if !strings.HasSuffix(resp.Output, "output.mp4") || !strings.Contains(resp.Output, "renders") {
+		t.Errorf("output: want path ending in renders/output.mp4, got %q", resp.Output)
 	}
 }
 
