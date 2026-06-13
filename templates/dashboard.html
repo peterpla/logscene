@@ -35,8 +35,8 @@
       <div class="card-footer bg-transparent border-top-0 pt-0">
         {{if $.Trial.IsReadOnly}}
         <button class="btn btn-sm btn-outline-secondary" disabled title="Upgrade to render">Render</button>
-        {{else if eq .CapturesToday 0}}
-        <button class="btn btn-sm btn-outline-secondary" disabled title="No captures yet today">Render</button>
+        {{else if not .CanRender}}
+        <button class="btn btn-sm btn-outline-secondary" disabled title="Requires 2 or more captures">Render</button>
         {{else}}
         <button class="btn btn-sm btn-outline-primary"
                 data-bs-toggle="modal" data-bs-target="#renderModal"

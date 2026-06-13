@@ -1344,7 +1344,20 @@ func TestHandleHome_webcamCard_error(t *testing.T) {
 	assertHTML(t, body, `Error`)
 }
 
-func TestHandleHome_renderButton_noCaptures(t *testing.T) {
+func makeCaptures(t *testing.T, dir string, n int) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for i := range n {
+		name := filepath.Join(dir, fmt.Sprintf("frame%02d.jpg", i))
+		if err := os.WriteFile(name, []byte{}, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestHandleHome_renderButton_zeroCaptures(t *testing.T) {
 	srv := newTestServer(t)
 	if err := srv.initTemplates(); err != nil {
 		t.Fatalf("initTemplates: %v", err)
@@ -1353,17 +1366,38 @@ func TestHandleHome_renderButton_noCaptures(t *testing.T) {
 
 	wc := newWebcam()
 	wc.Name = "New Cam"
-	// NextCapture=0, CaptureTimes empty → CapturesToday=0
+	wc.Folder = "new-cam"
+	// 0 .jpg files → CanRender=false
 	srv.mu.Lock()
 	srv.webcams.Append(wc)
 	srv.mu.Unlock()
 
 	_, body := getBody(t, srv, "/")
-	assertHTML(t, body, `disabled title="No captures yet today"`)
+	assertHTML(t, body, `disabled title="Requires 2 or more captures"`)
 	assertNoHTML(t, body, `btn-outline-primary"`)
 }
 
-func TestHandleHome_renderButton_withCaptures(t *testing.T) {
+func TestHandleHome_renderButton_oneCapture(t *testing.T) {
+	srv := newTestServer(t)
+	if err := srv.initTemplates(); err != nil {
+		t.Fatalf("initTemplates: %v", err)
+	}
+	srv.router.GET("/", srv.handleHome())
+
+	wc := newWebcam()
+	wc.Name = "One Cam"
+	wc.Folder = "one-cam"
+	makeCaptures(t, filepath.Join(srv.config.BaseDir, wc.Folder), 1)
+	srv.mu.Lock()
+	srv.webcams.Append(wc)
+	srv.mu.Unlock()
+
+	_, body := getBody(t, srv, "/")
+	assertHTML(t, body, `disabled title="Requires 2 or more captures"`)
+	assertNoHTML(t, body, `btn-outline-primary"`)
+}
+
+func TestHandleHome_renderButton_twoCaptures(t *testing.T) {
 	srv := newTestServer(t)
 	if err := srv.initTemplates(); err != nil {
 		t.Fatalf("initTemplates: %v", err)
@@ -1372,17 +1406,15 @@ func TestHandleHome_renderButton_withCaptures(t *testing.T) {
 
 	wc := newWebcam()
 	wc.Name = "Active Cam"
-	wc.IntervalMinutes = 60
-	wc.DayFirst = time.Now().Add(-2 * time.Hour)
-	wc.DayLast = time.Now().Add(2 * time.Hour)
-	wc.NextCaptureAt = time.Now().Add(time.Hour) // 2 intervals past DayFirst → CapturesToday=2
+	wc.Folder = "active-cam"
+	makeCaptures(t, filepath.Join(srv.config.BaseDir, wc.Folder), 2)
 	srv.mu.Lock()
 	srv.webcams.Append(wc)
 	srv.mu.Unlock()
 
 	_, body := getBody(t, srv, "/")
 	assertHTML(t, body, `btn-outline-primary`)
-	assertNoHTML(t, body, `disabled title="No captures yet today"`)
+	assertNoHTML(t, body, `disabled title="Requires 2 or more captures"`)
 }
 
 func TestHandleHome_trialWarning(t *testing.T) {
@@ -1474,7 +1506,7 @@ func TestWebcamCard_nextCaptureIncludesTimezone(t *testing.T) {
 	wc.DayFirst = time.Date(2026, 6, 6, 13, 0, 0, 0, time.UTC) // 06:00 PDT
 	wc.DayLast = time.Date(2026, 6, 7, 3, 0, 0, 0, time.UTC)   // 20:00 PDT
 
-	d := webcamCard(wc)
+	d := webcamCard(wc, t.TempDir())
 
 	want := "12:00 PM PDT"
 	if d.NextCapture != want {

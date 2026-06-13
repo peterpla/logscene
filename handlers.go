@@ -33,6 +33,7 @@ type webcamCardData struct {
 	StatusClass     string // Bootstrap bg-* colour token
 	NextCapture     string // formatted time or short status string
 	CapturesToday   int
+	CanRender       bool // true if capture folder contains 2+ .jpg files on disk
 }
 
 // dashboardData is the template context for the dashboard page.
@@ -102,7 +103,7 @@ func writeFailureFields(wc *Webcam) (sourceLabel, sourceValue, scheduleDesc, cli
 }
 
 // webcamCard builds display data from a live Webcam, holding its read lock.
-func webcamCard(wc *Webcam) webcamCardData {
+func webcamCard(wc *Webcam, baseDir string) webcamCardData {
 	wc.mu.RLock()
 	defer wc.mu.RUnlock()
 
@@ -148,6 +149,11 @@ func webcamCard(wc *Webcam) webcamCardData {
 		}
 	}
 
+	// Assumes captures are flat files in BaseDir/Folder/. If subdirectory layout changes, update this glob.
+	// For LocalStorage, handleNew guarantees this directory exists before the webcam is persisted.
+	matches, _ := filepath.Glob(filepath.Join(baseDir, d.Folder, "*.jpg"))
+	d.CanRender = len(matches) > 1
+
 	return d
 }
 
@@ -157,7 +163,7 @@ func (s *server) handleHome() httprouter.Handle {
 		s.mu.RLock()
 		cards := make([]webcamCardData, 0, len(*s.webcams))
 		for _, wc := range *s.webcams {
-			cards = append(cards, webcamCard(wc))
+			cards = append(cards, webcamCard(wc, s.config.BaseDir))
 		}
 		trial := s.trial
 		s.mu.RUnlock()
