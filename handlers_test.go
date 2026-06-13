@@ -838,6 +838,86 @@ func TestHandleRender_trialGraceRender_secondCallSameDay(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// GET /render/status
+// ---------------------------------------------------------------------------
+
+func TestHandleRenderStatus_rendering(t *testing.T) {
+	srv := newTestServer(t)
+	srv.router.GET("/render/status", srv.handleRenderStatus())
+	srv.renderJobs.Store("/tmp/out.mp4", renderJobStatus{Status: "rendering"})
+
+	req := httptest.NewRequest(http.MethodGet, "/render/status?output="+url.QueryEscape("/tmp/out.mp4"), nil)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", w.Code)
+	}
+	var resp renderJobStatus
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Status != "rendering" {
+		t.Errorf("status: want rendering, got %q", resp.Status)
+	}
+	// Non-terminal: entry must still be present.
+	if _, ok := srv.renderJobs.Load("/tmp/out.mp4"); !ok {
+		t.Error("rendering entry should not be deleted")
+	}
+}
+
+func TestHandleRenderStatus_complete(t *testing.T) {
+	srv := newTestServer(t)
+	srv.router.GET("/render/status", srv.handleRenderStatus())
+	srv.renderJobs.Store("/tmp/out.mp4", renderJobStatus{Status: "complete", Message: "/tmp/out.mp4"})
+
+	req := httptest.NewRequest(http.MethodGet, "/render/status?output="+url.QueryEscape("/tmp/out.mp4"), nil)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", w.Code)
+	}
+	var resp renderJobStatus
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Status != "complete" {
+		t.Errorf("status: want complete, got %q", resp.Status)
+	}
+	// Terminal: entry must be deleted after read.
+	if _, ok := srv.renderJobs.Load("/tmp/out.mp4"); ok {
+		t.Error("complete entry should be deleted after first read")
+	}
+}
+
+func TestHandleRenderStatus_notFound(t *testing.T) {
+	srv := newTestServer(t)
+	srv.router.GET("/render/status", srv.handleRenderStatus())
+
+	req := httptest.NewRequest(http.MethodGet, "/render/status?output="+url.QueryEscape("/tmp/missing.mp4"), nil)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("want 404, got %d", w.Code)
+	}
+}
+
+func TestHandleRenderStatus_missingParam(t *testing.T) {
+	srv := newTestServer(t)
+	srv.router.GET("/render/status", srv.handleRenderStatus())
+
+	req := httptest.NewRequest(http.MethodGet, "/render/status", nil)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("want 400, got %d", w.Code)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // POST /new — trial enforcement
 // ---------------------------------------------------------------------------
 

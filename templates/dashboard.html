@@ -152,9 +152,41 @@
     }
   }
 
+  // ── Render status polling ────────────────────────────────────────
+  var renderPoll = null;
+
+  function stopRenderPoll() {
+    if (renderPoll) { clearInterval(renderPoll); renderPoll = null; }
+  }
+
+  function startRenderPoll(output) {
+    stopRenderPoll();
+    renderPoll = setInterval(function() {
+      fetch('/render/status?output=' + encodeURIComponent(output))
+        .then(function(r) {
+          if (r.status === 404) { stopRenderPoll(); return null; }
+          return r.json();
+        })
+        .then(function(data) {
+          if (!data) return;
+          if (data.status === 'complete') {
+            stopRenderPoll();
+            document.getElementById('renderStatus').textContent =
+              'Complete — saved to: ' + data.message;
+          } else if (data.status === 'error') {
+            stopRenderPoll();
+            document.getElementById('renderStatus').textContent =
+              'Render failed: ' + data.message;
+          }
+        })
+        .catch(stopRenderPoll);
+    }, 2000);
+  }
+
   // ── Modal lifecycle ─────────────────────────────────────────────
   var renderModal = document.getElementById('renderModal');
   renderModal.addEventListener('show.bs.modal', function(e) {
+    stopRenderPoll();
     this._folder   = e.relatedTarget.dataset.folder;
     this._interval = parseInt(e.relatedTarget.dataset.interval) || 15;
     document.getElementById('renderOutput').value = this._folder + '.mp4';
@@ -173,6 +205,8 @@
 
     updateRenderEstimate();
   });
+
+  renderModal.addEventListener('hide.bs.modal', stopRenderPoll);
 
   document.getElementById('renderOutput').addEventListener('input', updateOutputPath);
   document.getElementById('renderStride').addEventListener('change', updateRenderEstimate);
@@ -203,8 +237,9 @@
     })
     .then(function(r) { return r.json(); })
     .then(function(data) {
-      document.getElementById('renderStatus').textContent = 'Rendering started — saved to: ' + data.output;
+      document.getElementById('renderStatus').textContent = 'Rendering…';
       document.getElementById('renderSubmit').disabled = true;
+      startRenderPoll(data.output);
     })
     .catch(function(err) {
       document.getElementById('renderStatus').textContent = 'Error: ' + err.message;

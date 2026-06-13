@@ -436,6 +436,12 @@ func (s *server) handleLogs() httprouter.Handle {
 	}
 }
 
+// renderJobStatus is stored in server.renderJobs and returned by GET /render/status.
+type renderJobStatus struct {
+	Status  string `json:"status"`  // "rendering" | "complete" | "error"
+	Message string `json:"message"` // full output path on complete; error detail on error
+}
+
 // renderRequest is the JSON body for POST /render.
 type renderRequest struct {
 	Folder string `json:"folder"`  // webcam folder name, e.g. "kohm-yah-mah-nee"
@@ -490,11 +496,15 @@ func (s *server) handleRender() httprouter.Handle {
 			Stride:    req.Stride,
 		}
 
+		s.renderJobs.Store(fullOutput, renderJobStatus{Status: "rendering"})
 		ctx := s.ctx
 		go func() {
 			if err := s.renderer.Render(ctx, dir, fullOutput, opts); err != nil {
 				slog.Info("render failed", "webcam", req.Folder, "output", fullOutput)
 				slog.Debug("handleRender: render failed", "webcam", req.Folder, "output", fullOutput, "failure_class", fcRenderFailure, "error", err)
+				s.renderJobs.Store(fullOutput, renderJobStatus{Status: "error", Message: err.Error()})
+			} else {
+				s.renderJobs.Store(fullOutput, renderJobStatus{Status: "complete", Message: fullOutput})
 			}
 		}()
 
@@ -503,6 +513,30 @@ func (s *server) handleRender() httprouter.Handle {
 			Status string `json:"status"`
 			Output string `json:"output"`
 		}{"rendering", fullOutput})
+	}
+}
+
+// handleRenderStatus returns the current status of an async render job.
+// GET /render/status?output=<fullOutputPath>
+// Terminal entries (complete or error) are deleted after the first read.
+func (s *server) handleRenderStatus() httprouter.Handle {
+	return func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+		output := r.URL.Query().Get("output")
+		if output == "" {
+			http.Error(w, "output parameter required", http.StatusBadRequest)
+			return
+		}
+		v, ok := s.renderJobs.Load(output)
+		if !ok {
+			http.Error(w, "no render job found for output", http.StatusNotFound)
+			return
+		}
+		entry := v.(renderJobStatus)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(entry)
+		if entry.Status != "rendering" {
+			s.renderJobs.Delete(output)
+		}
 	}
 }
 

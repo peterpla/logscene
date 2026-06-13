@@ -50,6 +50,7 @@ type server struct {
 	mu           sync.RWMutex       // protects webcams, webcamCtx, webcamCancel
 	startTime    time.Time
 	trial        TrialState
+	renderJobs   sync.Map // fullOutputPath → renderJobStatus; entries deleted after first terminal read
 }
 
 var (
@@ -165,6 +166,7 @@ func main() {
 	srv.router.GET("/next", srv.handleNext())
 	srv.router.GET("/logs", srv.handleLogs())
 	srv.router.POST("/render", srv.handleRender())
+	srv.router.GET("/render/status", srv.handleRenderStatus())
 	srv.router.POST("/reload", srv.handleReload())
 
 	hs := &http.Server{
