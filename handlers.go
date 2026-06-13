@@ -510,7 +510,15 @@ func (s *server) handleRender() httprouter.Handle {
 				slog.Debug("handleRender: render failed", "webcam", req.Folder, "output", fullOutput, "failure_class", fcRenderFailure, "error", err)
 				s.renderJobs.Store(fullOutput, renderJobStatus{Status: "error", Message: err.Error()})
 			} else {
-				s.renderJobs.Store(fullOutput, renderJobStatus{Status: "complete", Message: fullOutput})
+				ts := time.Now().Format("20060102_1504")
+				ext := filepath.Ext(fullOutput)
+				finalOutput := strings.TrimSuffix(fullOutput, ext) + "_" + ts + ext
+				if err := os.Rename(fullOutput, finalOutput); err != nil {
+					slog.Debug("handleRender: rename with timestamp failed, keeping original filename", "error", err)
+					finalOutput = fullOutput
+				}
+				slog.Info("timelapse render complete", "webcam", req.Folder, "output", finalOutput)
+				s.renderJobs.Store(fullOutput, renderJobStatus{Status: "complete", Message: finalOutput})
 			}
 		}()
 
