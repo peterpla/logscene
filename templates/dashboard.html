@@ -56,7 +56,7 @@
   <div class="modal-dialog">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title" id="renderModalLabel">Render Timelapse</h5>
+        <h5 class="modal-title" id="renderModalLabel">Create Timelapse Video</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body">
@@ -187,8 +187,20 @@
           if (!data) return;
           if (data.status === 'complete') {
             stopRenderPoll();
-            document.getElementById('renderStatus').textContent =
-              'Complete — saved to: ' + data.message;
+            var path = data.message;
+            var statusEl = document.getElementById('renderStatus');
+            statusEl.textContent = 'Complete — saved to: ';
+            var link = document.createElement('a');
+            link.href = 'file:///' + path.replace(/\\/g, '/');
+            link.textContent = path;
+            statusEl.appendChild(link);
+            var copyBtn = document.createElement('button');
+            copyBtn.type = 'button';
+            copyBtn.title = 'Copy path';
+            copyBtn.style.cssText = 'background:none;border:none;padding:0 0 0 6px;cursor:pointer;vertical-align:middle;color:inherit;opacity:.65;';
+            copyBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
+            copyBtn.addEventListener('click', function() { navigator.clipboard.writeText(path); });
+            statusEl.appendChild(copyBtn);
           } else if (data.status === 'error') {
             stopRenderPoll();
             document.getElementById('renderStatus').textContent =
@@ -206,7 +218,7 @@
     this._folder   = e.relatedTarget.dataset.folder;
     this._interval = parseInt(e.relatedTarget.dataset.interval) || 15;
     document.getElementById('renderOutput').value = this._folder + '.mp4';
-    document.getElementById('renderStatus').textContent = '';
+    document.getElementById('renderStatus').replaceChildren();
     document.getElementById('renderSubmit').disabled = false;
     document.getElementById('renderDateError').style.display = 'none';
     updateOutputPath();
