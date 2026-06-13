@@ -29,7 +29,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"time"
@@ -39,18 +39,18 @@ const (
 	backoffInitial = 1 * time.Second
 	backoffMax     = 10 * time.Minute
 
-	outageTier2After    = 24 * time.Hour       // switch from exponential to hourly
-	outageTier3After    = 48 * time.Hour       // switch from hourly to daily
-	outageAutoSuspendAfter = 14 * 24 * time.Hour // exit goroutine after 2 weeks
+	outageTier2After       = 24 * time.Hour       // switch from exponential to hourly
+	outageTier3After       = 48 * time.Hour        // switch from hourly to daily
+	outageAutoSuspendAfter = 14 * 24 * time.Hour   // exit goroutine after 2 weeks
 )
 
 // capture is the long-running goroutine for one webcam.
 func capture(ctx context.Context, wc *Webcam, pollInterval time.Duration, srv *server) {
-	name := "capture." + wc.Name
 	defer srv.webcamWg.Done()
 
 	if wc.Disabled {
-		log.Printf("%s: webcam is disabled — skipping", name)
+		slog.Info("webcam disabled — no captures", "webcam", wc.Name)
+		slog.Debug("webcam disabled at startup, goroutine exiting", "webcam", wc.Name)
 		return
 	}
 
@@ -60,19 +60,17 @@ func capture(ctx context.Context, wc *Webcam, pollInterval time.Duration, srv *s
 	wc.mu.RUnlock()
 
 	if err := wc.SetCaptureTimes(ctx, time.Now(), srv.tz, srv.solar); err != nil {
-		log.Printf("%s: SetCaptureTimes failed: %v — exiting.\n"+
-			"  Restart the server to retry, or set \"disabled\": true in logscene.json to suppress.",
-			name, err)
+		slog.Debug("SetCaptureTimes failed at startup, goroutine exiting",
+			"webcam", wc.Name,
+			"error", err)
 		return
 	}
 
 	if tzWasEmpty {
 		if err := srv.webcams.Write(srv.config.Path, srv.validate); err != nil {
-			log.Printf("%s: persist timezone to logscene.json: %v", name, err)
-		} else {
-			wc.mu.RLock()
-			log.Printf("%s: cached timezone %q in logscene.json", name, wc.WebcamTZ)
-			wc.mu.RUnlock()
+			slog.Debug("failed to persist timezone to logscene.json — will re-fetch on next startup",
+				"webcam", wc.Name,
+				"error", err)
 		}
 	}
 
@@ -88,19 +86,39 @@ func capture(ctx context.Context, wc *Webcam, pollInterval time.Duration, srv *s
 	wc.mu.Unlock()
 	if rollover {
 		if err := wc.SetCaptureTimes(ctx, tomorrowRef, srv.tz, srv.solar); err != nil {
-			log.Printf("%s: SetCaptureTimes (tomorrow) failed: %v — exiting.\n"+
-				"  Restart the server to retry, or set \"disabled\": true in logscene.json to suppress.",
-				name, err)
+			slog.Debug("SetCaptureTimes (tomorrow) failed at startup, goroutine exiting",
+				"webcam", wc.Name,
+				"error", err)
 			return
 		}
 	}
 
 	wc.mu.RLock()
-	log.Printf("%s: tz=%s nextCaptureAt=%s dayFirst=%s dayLast=%s firstFlags=%b lastFlags=%b",
-		name, wc.WebcamTZ, wc.NextCaptureAt.UTC().Format("15:04:05"),
-		wc.DayFirst.UTC().Format("15:04:05"), wc.DayLast.UTC().Format("15:04:05"),
-		wc.FirstFlags, wc.LastFlags)
+	snapTZ := wc.WebcamTZ
+	snapLoc := wc.WebcamLoc
+	snapSunrise := wc.SunriseUTC
+	snapFirst := wc.DayFirst
+	snapLast := wc.DayLast
+	snapNext := wc.NextCaptureAt
+	snapInterval := wc.IntervalMinutes
+	snapFirstFlags := wc.FirstFlags
+	snapLastFlags := wc.LastFlags
 	wc.mu.RUnlock()
+
+	var solarDate string
+	if snapLoc != nil {
+		solarDate = snapSunrise.In(snapLoc).Format("2006-01-02")
+	}
+	slog.Debug("webcam ready — entering capture loop",
+		"webcam", wc.Name,
+		"tz", snapTZ,
+		"solar_date", solarDate,
+		"day_first", snapFirst.UTC().Format("15:04:05"),
+		"day_last", snapLast.UTC().Format("15:04:05"),
+		"next_capture_at", snapNext.UTC().Format("15:04:05"),
+		"interval_minutes", snapInterval,
+		"first_flags", fmt.Sprintf("%b", snapFirstFlags),
+		"last_flags", fmt.Sprintf("%b", snapLastFlags))
 
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
@@ -108,14 +126,17 @@ func capture(ctx context.Context, wc *Webcam, pollInterval time.Duration, srv *s
 	for {
 		select {
 		case <-ctx.Done():
-			log.Printf("%s: context cancelled — exiting", name)
 			return
 		case <-ticker.C:
 			if wc.autoSuspendDue() {
-				log.Printf("%s: auto-suspended after %v of consecutive failures — goroutine exiting.\n"+
-					"  Set \"disabled\": true in logscene.json to suppress on restart,\n"+
-					"  or restart the server to try again.",
-					name, outageAutoSuspendAfter)
+				slog.Info("webcam could not be reached for 2 consecutive weeks", "webcam", wc.Name)
+				wc.mu.RLock()
+				firstFailure := wc.FirstFailure
+				wc.mu.RUnlock()
+				slog.Debug("auto-suspend threshold reached, goroutine exiting — awaiting user decision via modal",
+					"webcam", wc.Name,
+					"first_failure", firstFailure.UTC().Format("2006-01-02"),
+					"outage_duration", time.Since(firstFailure).Truncate(time.Minute))
 				return
 			}
 
@@ -131,18 +152,23 @@ func capture(ctx context.Context, wc *Webcam, pollInterval time.Duration, srv *s
 				backoff := wc.nextRetryInterval()
 				wc.mu.RUnlock()
 				effectiveNext := max(backoff, pollInterval)
-				log.Printf("%s: CaptureImage failed (failing %v, next attempt in ~%v (backoff %v, poll interval %v)): %v",
-					name, since, effectiveNext, backoff, pollInterval, err)
+				slog.Debug("CaptureImage failed",
+					"webcam", wc.Name,
+					"failure_class", fcUnreachable,
+					"error", err,
+					"outage_duration", since,
+					"next_retry_in", effectiveNext)
 				continue
 			}
 
 			wc.recordSuccess()
-			log.Printf("%s: captured %s (%d bytes)", name, key, size)
+			slog.Debug("captured", "webcam", wc.Name, "filePath", key, "bytes", size)
 
 			if err := wc.UpdateNextCapture(ctx, srv.tz, srv.solar); err != nil {
-				log.Printf("%s: UpdateNextCapture: %v — exiting.\n"+
-					"  Restart the server to retry, or set \"disabled\": true in logscene.json to suppress.",
-					name, err)
+				slog.Debug("UpdateNextCapture failed, goroutine exiting",
+					"webcam", wc.Name,
+					"failure_class", fcNetworkAPI,
+					"error", err)
 				return
 			}
 		}
@@ -361,8 +387,14 @@ func (wc *Webcam) UpdateNextCapture(ctx context.Context, tzClient TimezoneClient
 			return fmt.Errorf("UpdateNextCapture: %q SetCaptureTimes failed after %d attempts: %w",
 				wc.Name, len(retries)+1, err)
 		}
-		log.Printf("UpdateNextCapture: %q attempt %d/%d failed: %v, retrying in %v",
-			wc.Name, i+1, len(retries)+1, err, retries[i])
+		slog.Debug("UpdateNextCapture: SetCaptureTimes attempt failed, retrying",
+			"webcam", wc.Name,
+			"failure_class", fcNetworkAPI,
+			"api", "sunrise-sunset",
+			"attempt", i+1,
+			"maxAttempts", len(retries)+1,
+			"error", err,
+			"retryIn", retries[i])
 		select {
 		case <-time.After(retries[i]):
 		case <-ctx.Done():
@@ -371,10 +403,17 @@ func (wc *Webcam) UpdateNextCapture(ctx context.Context, tzClient TimezoneClient
 	}
 
 	wc.mu.RLock()
-	log.Printf("UpdateNextCapture: %q tomorrow set; dayFirst=%s dayLast=%s nextCaptureAt=%s",
-		wc.Name, wc.DayFirst.UTC().Format("15:04:05"),
-		wc.DayLast.UTC().Format("15:04:05"), wc.NextCaptureAt.UTC().Format("15:04:05"))
+	snapFirst := wc.DayFirst
+	snapLast := wc.DayLast
+	snapNext := wc.NextCaptureAt
+	snapTZ := wc.WebcamTZ
 	wc.mu.RUnlock()
+	slog.Debug("UpdateNextCapture: tomorrow set",
+		"webcam", wc.Name,
+		"dayFirst", snapFirst.UTC().Format("15:04:05"),
+		"dayLast", snapLast.UTC().Format("15:04:05"),
+		"nextCaptureAt", snapNext.UTC().Format("15:04:05"),
+		"tz", snapTZ)
 	return nil
 }
 

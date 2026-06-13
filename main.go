@@ -10,7 +10,6 @@ import (
 	"context"
 	"fmt"
 	"html/template"
-	"io"
 	"io/fs"
 	"log"
 	"log/slog"
@@ -108,7 +107,10 @@ func main() {
 	}
 
 	if err := openLogFile(srv.config.LogDir, time.Now()); err != nil {
-		log.Printf("main: cannot open log file in %s: %v — log output going to console", srv.config.LogDir, err)
+		slog.Info("LogScene cannot start: log files cannot be opened",
+			"logDir", srv.config.LogDir, "error", err)
+		// TODO Step 4.x: assembleSupportBundle + native MessageBox before exit
+		os.Exit(1)
 	}
 
 	// Start daily log-rotation goroutine.
@@ -124,7 +126,9 @@ func main() {
 	go func() {
 		defer launchWg.Done()
 		if srv.trial.capturesStopped() {
-			log.Printf("main: trial %s — captures disabled", srv.trial)
+			slog.Info("trial period ended — no new captures. Renders and existing images are unaffected.",
+				"trialState", srv.trial.String())
+			slog.Debug("trial state at goroutine launch — captures not started", "state", srv.trial.String())
 			return
 		}
 		for _, wc := range *srv.webcams {
@@ -135,12 +139,18 @@ func main() {
 	}()
 
 	if err := srv.initTemplates(); err != nil {
-		log.Fatalf("main: initTemplates: %v", err)
+		slog.Info("LogScene couldn't start — could not initialize templates. Try reinstalling LogScene.", "error", err)
+		slog.Debug("initTemplates failed", "failure_class", fcInternalError, "error", err)
+		// TODO Step 4.x: assembleSupportBundle + native MessageBox before exit
+		os.Exit(1)
 	}
 
 	staticSub, err := fs.Sub(staticFS, "static")
 	if err != nil {
-		log.Fatalf("main: fs.Sub staticFS: %v", err)
+		slog.Info("LogScene couldn't start — could not initialize static files. Try reinstalling LogScene.", "error", err)
+		slog.Debug("fs.Sub staticFS failed", "failure_class", fcInternalError, "error", err)
+		// TODO Step 4.x: assembleSupportBundle + native MessageBox before exit
+		os.Exit(1)
 	}
 	srv.router.Handler("GET", "/static/*filepath",
 		http.StripPrefix("/static/", http.FileServer(http.FS(staticSub))))
@@ -163,16 +173,18 @@ func main() {
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
 	}
-	log.Printf("main: listening on :%s", srv.config.Port)
+	slog.Debug("main: about to listen", "port", srv.config.Port)
 	go startListening(hs)
 	go printStartupSummary(srv.config.Port)
 
 	runUI(srv.config.Port)
-	log.Printf("main: shutting down")
+	slog.Debug("main: beginning shutdown")
 	srv.cancel()
 	launchWg.Wait() // ensure all webcamWg.Add calls complete before Wait
 	srv.webcamWg.Wait()
 	srv.wg.Wait()
+	slog.Info("LogScene stopped")
+	slog.Debug("main: shutdown complete")
 
 	if currentLogFile != nil {
 		currentLogFile.Close()
@@ -191,12 +203,16 @@ func newServer() *server {
 
 	installDate, err := readOrSetInstallDate()
 	if err != nil {
-		log.Fatalf("newServer: cannot read trial data from registry: %v\n"+
-			"  LogScene stores its trial state in HKCU\\Software\\LogScene.\n"+
-			"  If this error persists, contact support@logscene.net.", err)
+		slog.Info("LogScene couldn't start: unable to access settings storage.", "error", err)
+		slog.Debug("trial data registry read failed", "failure_class", fcRegistry, "error", err)
+		// TODO Step 4.x: assembleSupportBundle + native MessageBox before exit
+		os.Exit(1)
 	}
 	trial := computeTrialState(installDate)
-	log.Printf("newServer: trial=%s (installed %s)", trial, installDate.Format("2006-01-02"))
+	slog.Debug("trial state determined",
+		"state", trial.String(),
+		"installDate", installDate.Format("2006-01-02"),
+		"daysElapsed", int(time.Since(installDate).Hours()/24))
 
 	store := buildStorage(cfg.Storage)
 
@@ -226,9 +242,9 @@ func newServer() *server {
 func buildStorage(backend string) Storage {
 	switch strings.ToLower(backend) {
 	case "gcs":
-		log.Fatal("GCS storage not yet implemented — set LOGSCENE_STORAGE=local")
+		slog.Debug("storage backend not yet implemented, falling back to local", "requested", "gcs")
 	case "s3":
-		log.Fatal("S3 storage not yet implemented — set LOGSCENE_STORAGE=local")
+		slog.Debug("storage backend not yet implemented, falling back to local", "requested", "s3")
 	}
 	return NewLocalStorage() // default: local
 }
@@ -240,28 +256,16 @@ func startListening(hs *http.Server) {
 		if i := strings.LastIndex(hs.Addr, ":"); i >= 0 {
 			port = hs.Addr[i+1:]
 		}
-		log.Fatalf("startListening: cannot listen on port %s: %v", port, err)
+		slog.Info("LogScene could not start the server — the port may already be in use by another instance.",
+			"port", port, "error", err)
+		// TODO Step 4.x: assembleSupportBundle + native MessageBox before exit
+		os.Exit(1)
 	}
 }
 
-// printStartupSummary waits for capture goroutines to initialise, then calls
-// /status and /next and prints the responses to stdout so the operator gets
-// confirmation in the terminal even though log output has been redirected.
-func printStartupSummary(port string) {
-	time.Sleep(3 * time.Second)
-	client := &http.Client{Timeout: 5 * time.Second}
-	base := "http://localhost:" + port
-	for _, path := range []string{"/info", "/status", "/next"} {
-		resp, err := client.Get(base + path)
-		if err != nil {
-			fmt.Fprintf(os.Stdout, "startup %s: %v\n", path, err)
-			continue
-		}
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		fmt.Fprintf(os.Stdout, "%s\n", strings.TrimSpace(string(body)))
-	}
-}
+// printStartupSummary is a placeholder; replaced by per-webcam slog.Debug snapshots
+// and a "LogScene started successfully" slog.Info entry in the capture model refactor.
+func printStartupSummary(_ string) {}
 
 // newDayMaintenance wakes at server-local midnight each day to rotate the log file.
 func newDayMaintenance(ctx context.Context, srv *server) {
@@ -272,10 +276,11 @@ func newDayMaintenance(ctx context.Context, srv *server) {
 		select {
 		case <-time.After(time.Until(nextMidnight)):
 			if err := openLogFile(srv.config.LogDir, time.Now()); err != nil {
-				log.Printf("newDayMaintenance: openLogFile: %v", err)
+				slog.Info("LogScene encountered a problem managing its log files. Captures are continuing normally.")
+				slog.Debug("newDayMaintenance: openLogFile failed", "failure_class", fcFilesystem, "error", err)
+				// TODO Step 6i: add notification center entry
 			}
 		case <-ctx.Done():
-			log.Printf("newDayMaintenance: context cancelled — exiting")
 			return
 		}
 	}
@@ -304,7 +309,12 @@ func openLogFile(logDir string, date time.Time) error {
 	debugName := filepath.Join(logDir, "logscene-debug-"+date.Format("2006-01-02")+".log")
 	df, debugErr := os.OpenFile(debugName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if debugErr != nil {
-		log.Printf("openLogFile: cannot open debug log %s: %v", debugName, debugErr)
+		slog.Info("LogScene encountered a problem with its diagnostic log. Captures are continuing normally.")
+		slog.Debug("openLogFile: debug log could not be opened",
+			"failure_class", fcFilesystem,
+			"path", debugName,
+			"error", debugErr)
+		// TODO Step 6i: add notification center entry
 	} else {
 		if currentDebugLogFile != nil {
 			currentDebugLogFile.Close()
@@ -321,6 +331,7 @@ func openLogFile(logDir string, date time.Time) error {
 	}
 	slog.SetDefault(slog.New(h))
 
-	log.Printf("openLogFile: logging to %s", name)
+	slog.Debug("log file opened", "path", name)
 	return nil
 }
+

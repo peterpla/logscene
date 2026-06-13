@@ -12,7 +12,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"math/bits"
 	"os"
 	"path/filepath"
@@ -191,7 +191,7 @@ func (ws Webcams) Write(dir string, validate *validator.Validate) error {
 	if err := os.WriteFile(path, buf, 0644); err != nil {
 		return fmt.Errorf("Webcams.Write: %w", err)
 	}
-	log.Printf("Webcams.Write: wrote %s", path)
+	slog.Debug("config written", "path", path)
 	return nil
 }
 

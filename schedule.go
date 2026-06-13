@@ -13,7 +13,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -54,8 +54,10 @@ func (wc *Webcam) SetCaptureTimes(
 		if l, err := time.LoadLocation(cachedTZ); err == nil {
 			tz, loc = cachedTZ, l
 		} else {
-			log.Printf("SetCaptureTimes: %q cached timezone %q unrecognized (%v), re-fetching",
-				wc.Name, cachedTZ, err)
+			slog.Debug("cached timezone unrecognized, re-fetching",
+				"webcam", wc.Name,
+				"cachedTZ", cachedTZ,
+				"error", err)
 		}
 	}
 	if loc == nil {
@@ -81,9 +83,9 @@ func (wc *Webcam) SetCaptureTimes(
 		return fmt.Errorf("SetCaptureTimes: GetSolarTimes: %w", err)
 	}
 
-	// 4. Store schedule bounds under the write lock.
+	// 4. Store schedule bounds under the write lock, then log outside the lock
+	//    to avoid holding it across a file write.
 	wc.mu.Lock()
-	defer wc.mu.Unlock()
 
 	wc.WebcamTZ = tz
 	wc.WebcamLoc = loc
@@ -93,10 +95,12 @@ func (wc *Webcam) SetCaptureTimes(
 
 	first, err := wc.firstCaptureTime(webcamNow)
 	if err != nil {
+		wc.mu.Unlock()
 		return err
 	}
 	last, err := wc.lastCaptureTime(webcamNow)
 	if err != nil {
+		wc.mu.Unlock()
 		return err
 	}
 
@@ -104,9 +108,23 @@ func (wc *Webcam) SetCaptureTimes(
 	wc.DayLast = last
 	wc.NextCaptureAt = firstFutureCapture(first, last, wc.IntervalMinutes, referenceTime)
 
-	log.Printf("SetCaptureTimes: %q tz=%s dayFirst=%s dayLast=%s nextCaptureAt=%s",
-		wc.Name, tz, first.UTC().Format("15:04:05"), last.UTC().Format("15:04:05"),
-		wc.NextCaptureAt.UTC().Format("15:04:05"))
+	snapFirst, snapLast, snapNext := wc.DayFirst, wc.DayLast, wc.NextCaptureAt
+	snapInterval, snapFirstFlags, snapLastFlags := wc.IntervalMinutes, wc.FirstFlags, wc.LastFlags
+	wc.mu.Unlock()
+
+	slog.Debug("schedule computed",
+		"webcam", wc.Name,
+		"scheduleDate", webcamNow.Format("2006-01-02"),
+		"tz", tz,
+		"intervalMin", snapInterval,
+		"firstFlags", snapFirstFlags,
+		"lastFlags", snapLastFlags,
+		"sunrise", solar.Sunrise.UTC().Format("15:04:05"),
+		"solarNoon", solar.SolarNoon.UTC().Format("15:04:05"),
+		"sunset", solar.Sunset.UTC().Format("15:04:05"),
+		"dayFirst", snapFirst.UTC().Format("15:04:05"),
+		"dayLast", snapLast.UTC().Format("15:04:05"),
+		"nextCapture", snapNext.UTC().Format("15:04:05"))
 	return nil
 }
 

@@ -14,7 +14,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"math/rand"
 	"net/http"
 	"net/url"
@@ -80,7 +80,7 @@ func (c *HTTPTimezoneClient) GetTimezone(ctx context.Context, lat, lng float64) 
 		if resp.StatusCode == http.StatusTooManyRequests {
 			resp.Body.Close()
 			delay := time.Duration(1+rand.Intn(4)) * time.Second
-			log.Printf("GetTimezone: rate limited (429), retrying in %v", delay)
+			slog.Debug("timezone lookup rate limited, retrying", "retryIn", delay)
 			select {
 			case <-time.After(delay):
 				continue

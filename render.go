@@ -12,7 +12,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -99,7 +99,8 @@ func (r *LocalRenderer) Render(ctx context.Context, dir, outputKey string, opts 
 		frames = filtered
 	}
 
-	log.Printf("Render: %d frames → %s", len(frames), outputKey)
+	slog.Info("starting timelapse render", "frames", len(frames), "outputKey", outputKey)
+	slog.Debug("render started", "dir", dir, "outputKey", outputKey, "frames", len(frames))
 
 	tmp, err := os.CreateTemp("", "logscene-concat-*.txt")
 	if err != nil {
@@ -137,6 +138,7 @@ func (r *LocalRenderer) Render(ctx context.Context, dir, outputKey string, opts 
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("Render: ffmpeg: %w\nstderr: %s", err, strings.TrimSpace(stderr.String()))
 	}
-	log.Printf("Render: wrote %s", outputKey)
+	slog.Info("timelapse render complete", "outputKey", outputKey, "frames", len(frames))
+	slog.Debug("render complete", "outputKey", outputKey, "frames", len(frames))
 	return nil
 }

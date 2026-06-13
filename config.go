@@ -4,7 +4,7 @@ package main
 
 import (
 	"flag"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -52,15 +52,23 @@ func (c *Config) loadFrom(fs *flag.FlagSet, args []string, getenv func(string) s
 	} else if v := getenv("LOGSCENE_POLL"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n <= 0 {
-			log.Fatalf("Config: invalid LOGSCENE_POLL %q: must be a positive integer", v)
+			slog.Debug("invalid LOGSCENE_POLL value, using default", "value", v, "default", 60)
+			c.PollSecs = 60
+		} else {
+			c.PollSecs = n
 		}
-		c.PollSecs = n
 	} else {
 		c.PollSecs = 60
 	}
 
-	log.Printf("Config: path=%s poll=%d port=%s logdir=%s storage=%s base=%s tzdb_configured=%t",
-		c.Path, c.PollSecs, c.Port, c.LogDir, c.Storage, c.BaseDir, c.TzdbAPI != "")
+	slog.Debug("config resolved",
+		"path", c.Path,
+		"pollSecs", c.PollSecs,
+		"port", c.Port,
+		"logDir", c.LogDir,
+		"storage", c.Storage,
+		"baseDir", c.BaseDir,
+		"tzdbConfigured", c.TzdbAPI != "")
 }
 
 // coalesce returns the first non-empty string from vals.

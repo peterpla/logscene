@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -168,7 +168,7 @@ func (s *server) handleHome() httprouter.Handle {
 			Webcams: cards,
 		}
 		if err := s.tmplDashboard.ExecuteTemplate(w, "base", data); err != nil {
-			log.Printf("handleHome: %v", err)
+			slog.Debug("template execution error", "handler", "handleHome", "failure_class", fcInternalError, "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	}
@@ -187,7 +187,7 @@ func (s *server) handleGetNew() httprouter.Handle {
 			Trial: trial,
 		}
 		if err := s.tmplNewWebcam.ExecuteTemplate(w, "base", data); err != nil {
-			log.Printf("handleGetNew: %v", err)
+			slog.Debug("template execution error", "handler", "handleGetNew", "failure_class", fcInternalError, "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	}
@@ -258,12 +258,10 @@ func (s *server) handleNew() httprouter.Handle {
 		}
 
 		if err := s.validate.Struct(wc); err != nil {
-			log.Printf("handleNew: validate: %v", err)
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		if err := wc.SetFirstLastFlags(); err != nil {
-			log.Printf("handleNew: SetFirstLastFlags: %v", err)
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -280,7 +278,8 @@ func (s *server) handleNew() httprouter.Handle {
 		if _, ok := s.storage.(*LocalStorage); ok {
 			dir := filepath.Join(s.config.BaseDir, wc.Folder)
 			if err := os.MkdirAll(dir, 0755); err != nil {
-				log.Printf("handleNew: MkdirAll: %v", err)
+				slog.Info("capture directory could not be created", "webcam", wc.Name, "path", dir)
+				slog.Debug("handleNew: MkdirAll failed", "webcam", wc.Name, "path", dir, "failure_class", fcFilesystem, "error", err)
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
@@ -306,6 +305,14 @@ func (s *server) handleNew() httprouter.Handle {
 			s.mu.Lock()
 			s.webcams = s.webcams.Delete(wc.Name)
 			s.mu.Unlock()
+			slog.Info("webcam configuration could not be saved",
+				"webcam", wc.Name,
+				"path", filepath.Join(s.config.Path, masterFile))
+			slog.Debug("handleNew: Write failed",
+				"webcam", wc.Name,
+				"path", filepath.Join(s.config.Path, masterFile),
+				"failure_class", fcFilesystem,
+				"error", err)
 			sl, sv, sd, ct := writeFailureFields(wc)
 			data := writeFailureData{
 				Page:          "new-webcam",
@@ -319,7 +326,7 @@ func (s *server) handleNew() httprouter.Handle {
 			}
 			w.WriteHeader(http.StatusInternalServerError)
 			if tmplErr := s.tmplWriteFailure.ExecuteTemplate(w, "base", data); tmplErr != nil {
-				log.Printf("handleNew: write failure template: %v", tmplErr)
+				slog.Debug("template execution error", "handler", "handleNew write failure", "failure_class", fcInternalError, "error", tmplErr)
 			}
 			return
 		}
@@ -421,7 +428,7 @@ func (s *server) handleLogs() httprouter.Handle {
 			NotFound bool
 		}{"logs", "Logs", s.trial, logLines, err != nil}
 		if err := s.tmplLogs.ExecuteTemplate(w, "base", data); err != nil {
-			log.Printf("handleLogs: %v", err)
+			slog.Debug("template execution error", "handler", "handleLogs", "failure_class", fcInternalError, "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	}
@@ -447,16 +454,11 @@ func (s *server) handleRender() httprouter.Handle {
 		case TrialGraceRender:
 			today := time.Now().Format("2006-01-02")
 			last, err := readLastRenderDate()
-			if err != nil {
-				log.Printf("handleRender: readLastRenderDate: %v", err)
-			}
-			if last == today {
+			if err == nil && last == today {
 				http.Error(w, "grace period: one render per day — try again tomorrow", http.StatusForbidden)
 				return
 			}
-			if err := writeLastRenderDate(today); err != nil {
-				log.Printf("handleRender: writeLastRenderDate: %v — WARNING: grace-period render limit may not be enforced today", err)
-			}
+			_ = writeLastRenderDate(today)
 		}
 
 		var req renderRequest
@@ -480,7 +482,8 @@ func (s *server) handleRender() httprouter.Handle {
 		ctx := s.ctx
 		go func() {
 			if err := s.renderer.Render(ctx, dir, req.Output, opts); err != nil {
-				log.Printf("handleRender: folder=%s output=%s: %v", req.Folder, req.Output, err)
+				slog.Info("render failed", "webcam", req.Folder, "output", req.Output)
+				slog.Debug("handleRender: render failed", "webcam", req.Folder, "output", req.Output, "failure_class", fcRenderFailure, "error", err)
 			}
 		}()
 
@@ -503,7 +506,7 @@ func (s *server) handleReload() httprouter.Handle {
 		fresh := newWebcams()
 		path := filepath.Join(s.config.Path, masterFile)
 		if err := fresh.Read(path, s.validate); err != nil {
-			log.Printf("handleReload: read: %v", err)
+			slog.Debug("handleReload: config read failed", "error", err)
 			http.Error(w, "reload failed: "+err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -521,7 +524,7 @@ func (s *server) handleReload() httprouter.Handle {
 
 		// Relaunch with 2 s stagger to respect timezonedb.com rate limit.
 		if s.trial.capturesStopped() {
-			log.Printf("handleReload: trial %s — captures disabled", s.trial)
+			slog.Debug("handleReload: trial expired — captures disabled", "trial", s.trial.String())
 		} else {
 			for i, wc := range *fresh {
 				if i > 0 {
@@ -533,7 +536,7 @@ func (s *server) handleReload() httprouter.Handle {
 		}
 
 		n := len(*fresh)
-		log.Printf("handleReload: complete, %d webcams running", n)
+		slog.Debug("handleReload: complete", "webcams", n)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(struct {
 			Status  string `json:"status"`
@@ -684,7 +687,7 @@ func (s *server) handleGetLatlong() httprouter.Handle {
 			Trial TrialState
 		}{"", "Find Coordinates", s.trial}
 		if err := s.tmplLatlong.ExecuteTemplate(w, "base", data); err != nil {
-			log.Printf("handleGetLatlong: %v", err)
+			slog.Debug("template execution error", "handler", "handleGetLatlong", "failure_class", fcInternalError, "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	}

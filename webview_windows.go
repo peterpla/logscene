@@ -5,7 +5,8 @@
 package main
 
 import (
-	"log"
+	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -42,7 +43,9 @@ func ensureSingleInstance() bool {
 			bringExistingWindowToFront()
 			return false
 		}
-		log.Printf("ensureSingleInstance: CreateMutex: %v", err)
+		slog.Debug("ensureSingleInstance: CreateMutex failed — single-instance guard bypassed",
+			"failure_class", fcInternalError,
+			"error", err)
 		return true // unexpected error; let this instance run
 	}
 	appMutex = h
@@ -65,7 +68,11 @@ func bringExistingWindowToFront() {
 func runUI(port string) {
 	w := webview.New(false)
 	if w == nil {
-		log.Printf("runUI: WebView2 runtime not available — open http://127.0.0.1:%s in a browser", port)
+		url := fmt.Sprintf("http://127.0.0.1:%s", port)
+		slog.Info("running in browser mode — WebView2 runtime not available", "url", url)
+		slog.Debug("webview.New returned nil — WebView2 runtime not installed; falling back to browser mode", "url", url)
+		// TODO Step 4.4: show native MessageBox with loopback URL and keep-open instruction
+		// TODO Step 6i: add notification center entry for browser-mode fallback
 		c := make(chan os.Signal, 1)
 		signal.Notify(c, os.Interrupt)
 		<-c

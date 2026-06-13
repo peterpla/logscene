@@ -3,6 +3,7 @@ timelapse
 timelapse.exe
 /logscene
 logscene.exe
+logscene.exe~
 
 # Runtime data files
 timelapse.json
