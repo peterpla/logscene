@@ -2,6 +2,12 @@
 
 Last total: 79.9% (commit f34b840+phase1, 2026-06-13)
 
+## Workflow notes for future passes
+
+- **Check existing tests before proposing new ones.** Don't propose a test based on function-level % alone — grep for the function name in `*_test.go` first. Most apparent gaps already have tests; the % anomaly is usually a coverage tool artifact.
+- **Don't launch real `capture()` goroutines in coverage runs.** Tests that call `handleReload` with 2+ webcams (or otherwise start the capture loop) cause non-deterministic instrumentation of large files and produce a net coverage *decrease*. The stagger sleep (`i>0` branch in `handleReload`) is an accepted gap for this reason.
+- **Focus new-functionality passes on newly added functions.** Run `git diff <last-coverage-commit>..HEAD --name-only` to find changed files, then check only those functions against this gap list. Don't re-analyse the whole codebase.
+
 ## Integration territory / process lifecycle
 
 - **`main.go: main()`** — OS process startup, flag parsing, signal handling; cannot be exercised as a unit test.
