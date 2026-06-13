@@ -1,6 +1,6 @@
 # Coverage Accepted Gaps
 
-Last total: 79.9% (commit f34b840+phase1, 2026-06-13)
+Last total: 79.9% (commit d7249b0, 2026-06-13)
 
 ## Workflow notes for future passes
 

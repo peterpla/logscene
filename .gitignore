@@ -15,6 +15,7 @@ logscene.json
 # Go coverage tool output
 *.out
 coverage
+coverage_baseline
 coverage.html
 cov
 
