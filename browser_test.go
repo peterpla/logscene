@@ -253,6 +253,7 @@ func newDashboardTestServer(t *testing.T) *httptest.Server {
 		http.StripPrefix("/static/", http.FileServer(http.FS(staticSub))))
 	srv.router.GET("/", srv.handleHome())
 	srv.router.POST("/render", srv.handleRender())
+	srv.router.GET("/render/status", srv.handleRenderStatus())
 
 	wc := newWebcam()
 	wc.Name = "Test Cam"
@@ -786,5 +787,90 @@ func TestBrowser_renderModal_submit(t *testing.T) {
 	}
 	if !strings.Contains(status, "Rendering") {
 		t.Errorf("renderStatus after submit: want 'Rendering', got %q", status)
+	}
+}
+
+func TestBrowser_renderModal_outputPathHint(t *testing.T) {
+	ctx, cancel := newEdgeCtx(t)
+	defer cancel()
+	ts := newDashboardTestServer(t)
+
+	// Open modal and wait for it to be ready.
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(ts.URL+"/"),
+		chromedp.WaitVisible(`button[data-bs-toggle="modal"]`, chromedp.ByQuery),
+		chromedp.Click(`button[data-bs-toggle="modal"]`, chromedp.ByQuery),
+		chromedp.Poll(
+			`document.getElementById('renderStride').options.length > 1`,
+			nil,
+			chromedp.WithPollingTimeout(3*time.Second),
+		),
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	// Type a filename — fires the input event which triggers updateOutputPath.
+	if err := chromedp.Run(ctx,
+		chromedp.Clear(`#renderOutput`, chromedp.ByID),
+		chromedp.SendKeys(`#renderOutput`, "my-timelapse.mp4", chromedp.ByID),
+		chromedp.Poll(
+			`document.getElementById('renderOutputPath').textContent.indexOf('renders') !== -1`,
+			nil,
+			chromedp.WithPollingTimeout(3*time.Second),
+		),
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	var hint string
+	if err := chromedp.Run(ctx,
+		chromedp.Text(`#renderOutputPath`, &hint, chromedp.ByID),
+	); err != nil {
+		t.Fatalf("read renderOutputPath: %v", err)
+	}
+	if !strings.Contains(hint, "renders") {
+		t.Errorf("path hint: want 'renders' in %q", hint)
+	}
+	if !strings.Contains(hint, "my-timelapse.mp4") {
+		t.Errorf("path hint: want 'my-timelapse.mp4' in %q", hint)
+	}
+}
+
+func TestBrowser_renderModal_pollCompletion(t *testing.T) {
+	ctx, cancel := newEdgeCtx(t)
+	defer cancel()
+	ts := newDashboardTestServer(t)
+
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(ts.URL+"/"),
+		chromedp.WaitVisible(`button[data-bs-toggle="modal"]`, chromedp.ByQuery),
+		chromedp.Click(`button[data-bs-toggle="modal"]`, chromedp.ByQuery),
+		chromedp.Poll(
+			`document.getElementById('renderStride').options.length > 1`,
+			nil,
+			chromedp.WithPollingTimeout(3*time.Second),
+		),
+		chromedp.Click(`#renderSubmit`, chromedp.ByID),
+		// Poll fires every 2 s; allow up to 8 s for "Complete" to appear.
+		chromedp.Poll(
+			`document.getElementById('renderStatus').textContent.indexOf('Complete') !== -1`,
+			nil,
+			chromedp.WithPollingTimeout(8*time.Second),
+		),
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	var status string
+	if err := chromedp.Run(ctx,
+		chromedp.Text(`#renderStatus`, &status, chromedp.ByID),
+	); err != nil {
+		t.Fatalf("read renderStatus: %v", err)
+	}
+	if !strings.Contains(status, "Complete") {
+		t.Errorf("renderStatus after poll: want 'Complete', got %q", status)
+	}
+	if !strings.Contains(status, "renders") {
+		t.Errorf("renderStatus after poll: want 'renders' in path, got %q", status)
 	}
 }
