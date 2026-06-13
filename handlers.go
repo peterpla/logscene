@@ -366,43 +366,70 @@ func (s *server) handleStatus() httprouter.Handle {
 	}
 }
 
-// handleNext returns JSON identifying the webcam with the soonest pending capture.
+// handleNext returns a fleet-wide capture status summary.
+//
+// Response fields:
+//
+//	capturing      — webcams whose NextCaptureAt is past with no failure streak (capture in flight)
+//	retrying       — webcams whose NextCaptureAt is past with an active failure streak (backoff pending)
+//	next_scheduled — soonest future NextCaptureAt across cameras not currently capturing or retrying;
+//	                 omitted when all cameras are done for the day or none are configured
 func (s *server) handleNext() httprouter.Handle {
+	type nextScheduled struct {
+		Webcam string `json:"webcam"`
+		At     string `json:"at"`
+		In     string `json:"in"`
+	}
+	type response struct {
+		Capturing []string       `json:"capturing"`
+		Retrying  []string       `json:"retrying"`
+		Next      *nextScheduled `json:"next_scheduled,omitempty"`
+	}
+
 	return func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
-		s.mu.RLock()
-		var nextName string
+		resp := response{
+			Capturing: []string{},
+			Retrying:  []string{},
+		}
+
+		now := time.Now()
 		var nextTime time.Time
+		var nextName string
+
+		s.mu.RLock()
 		for _, wc := range *s.webcams {
 			wc.mu.RLock()
-			if !wc.NextCaptureAt.IsZero() {
-				t := wc.NextCaptureAt
-				if nextTime.IsZero() || t.Before(nextTime) {
-					nextTime = t
-					nextName = wc.Name
-				}
-			}
+			nca := wc.NextCaptureAt
+			inFailureStreak := !wc.FirstFailure.IsZero()
+			name := wc.Name
 			wc.mu.RUnlock()
+
+			if nca.IsZero() {
+				continue
+			}
+			if now.After(nca) {
+				if inFailureStreak {
+					resp.Retrying = append(resp.Retrying, name)
+				} else {
+					resp.Capturing = append(resp.Capturing, name)
+				}
+			} else if nextTime.IsZero() || nca.Before(nextTime) {
+				nextTime = nca
+				nextName = name
+			}
 		}
 		s.mu.RUnlock()
 
-		w.Header().Set("Content-Type", "application/json")
-		if nextTime.IsZero() {
-			json.NewEncoder(w).Encode(struct {
-				Status string `json:"status"`
-			}{"no captures scheduled"})
-			return
+		if !nextTime.IsZero() {
+			resp.Next = &nextScheduled{
+				Webcam: nextName,
+				At:     nextTime.UTC().Format(time.RFC3339),
+				In:     time.Until(nextTime).Truncate(time.Second).String(),
+			}
 		}
-		json.NewEncoder(w).Encode(struct {
-			Webcam           string `json:"webcam"`
-			NextCapture      string `json:"next_capture"`
-			NextCaptureLocal string `json:"next_capture_local"`
-			In               string `json:"in"`
-		}{
-			Webcam:           nextName,
-			NextCapture:      nextTime.Format(time.RFC3339),
-			NextCaptureLocal: nextTime.In(time.Local).Format(time.RFC3339),
-			In:               time.Until(nextTime).Truncate(time.Second).String(),
-		})
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
 	}
 }
 

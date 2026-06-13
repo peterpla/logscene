@@ -112,21 +112,48 @@ func TestHandleStatus_withWebcams(t *testing.T) {
 // GET /next
 // ---------------------------------------------------------------------------
 
-func TestHandleNext_noCaptures(t *testing.T) {
-	srv := newTestServer(t)
+func decodeNextResp(t *testing.T, srv *server) struct {
+	Capturing []string `json:"capturing"`
+	Retrying  []string `json:"retrying"`
+	Next      *struct {
+		Webcam string `json:"webcam"`
+		At     string `json:"at"`
+		In     string `json:"in"`
+	} `json:"next_scheduled"`
+} {
+	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/next", nil)
 	w := httptest.NewRecorder()
 	srv.router.ServeHTTP(w, req)
-
 	if w.Code != http.StatusOK {
 		t.Fatalf("status: want 200, got %d", w.Code)
 	}
 	var resp struct {
-		Status string `json:"status"`
+		Capturing []string `json:"capturing"`
+		Retrying  []string `json:"retrying"`
+		Next      *struct {
+			Webcam string `json:"webcam"`
+			At     string `json:"at"`
+			In     string `json:"in"`
+		} `json:"next_scheduled"`
 	}
-	json.NewDecoder(w.Body).Decode(&resp)
-	if resp.Status != "no captures scheduled" {
-		t.Errorf("want 'no captures scheduled', got %q", resp.Status)
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	return resp
+}
+
+func TestHandleNext_noCaptures(t *testing.T) {
+	srv := newTestServer(t)
+	resp := decodeNextResp(t, srv)
+	if len(resp.Capturing) != 0 {
+		t.Errorf("capturing: want [], got %v", resp.Capturing)
+	}
+	if len(resp.Retrying) != 0 {
+		t.Errorf("retrying: want [], got %v", resp.Retrying)
+	}
+	if resp.Next != nil {
+		t.Errorf("next_scheduled: want nil, got %+v", resp.Next)
 	}
 }
 
@@ -139,23 +166,101 @@ func TestHandleNext_withCapture(t *testing.T) {
 	srv.webcams.Append(wc)
 	srv.mu.Unlock()
 
-	req := httptest.NewRequest(http.MethodGet, "/next", nil)
-	w := httptest.NewRecorder()
-	srv.router.ServeHTTP(w, req)
+	resp := decodeNextResp(t, srv)
+	if len(resp.Capturing) != 0 {
+		t.Errorf("capturing: want [], got %v", resp.Capturing)
+	}
+	if len(resp.Retrying) != 0 {
+		t.Errorf("retrying: want [], got %v", resp.Retrying)
+	}
+	if resp.Next == nil {
+		t.Fatal("next_scheduled: want entry, got nil")
+	}
+	if resp.Next.Webcam != "My Cam" {
+		t.Errorf("next_scheduled.webcam: want %q, got %q", "My Cam", resp.Next.Webcam)
+	}
+	if resp.Next.At == "" {
+		t.Error("next_scheduled.at should not be empty")
+	}
+}
 
-	var resp struct {
-		Webcam      string `json:"webcam"`
-		NextCapture string `json:"next_capture"`
-		In          string `json:"in"`
+func TestHandleNext_capturing(t *testing.T) {
+	srv := newTestServer(t)
+	wc := newWebcam()
+	wc.Name = "Live Cam"
+	wc.NextCaptureAt = time.Now().Add(-30 * time.Second) // past, no failure streak
+	srv.mu.Lock()
+	srv.webcams.Append(wc)
+	srv.mu.Unlock()
+
+	resp := decodeNextResp(t, srv)
+	if len(resp.Capturing) != 1 || resp.Capturing[0] != "Live Cam" {
+		t.Errorf("capturing: want [Live Cam], got %v", resp.Capturing)
 	}
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
+	if len(resp.Retrying) != 0 {
+		t.Errorf("retrying: want [], got %v", resp.Retrying)
 	}
-	if resp.Webcam != "My Cam" {
-		t.Errorf("webcam: want %q, got %q", "My Cam", resp.Webcam)
+	if resp.Next != nil {
+		t.Errorf("next_scheduled: want nil, got %+v", resp.Next)
 	}
-	if resp.NextCapture == "" {
-		t.Error("next_capture should not be empty")
+}
+
+func TestHandleNext_retrying(t *testing.T) {
+	srv := newTestServer(t)
+	wc := newWebcam()
+	wc.Name = "Flaky Cam"
+	wc.NextCaptureAt = time.Now().Add(-2 * time.Minute) // past, with failure streak
+	wc.FirstFailure = time.Now().Add(-10 * time.Minute)
+	srv.mu.Lock()
+	srv.webcams.Append(wc)
+	srv.mu.Unlock()
+
+	resp := decodeNextResp(t, srv)
+	if len(resp.Capturing) != 0 {
+		t.Errorf("capturing: want [], got %v", resp.Capturing)
+	}
+	if len(resp.Retrying) != 1 || resp.Retrying[0] != "Flaky Cam" {
+		t.Errorf("retrying: want [Flaky Cam], got %v", resp.Retrying)
+	}
+	if resp.Next != nil {
+		t.Errorf("next_scheduled: want nil, got %+v", resp.Next)
+	}
+}
+
+func TestHandleNext_mixed(t *testing.T) {
+	srv := newTestServer(t)
+
+	capturing := newWebcam()
+	capturing.Name = "Live Cam"
+	capturing.NextCaptureAt = time.Now().Add(-15 * time.Second)
+
+	retrying := newWebcam()
+	retrying.Name = "Flaky Cam"
+	retrying.NextCaptureAt = time.Now().Add(-5 * time.Minute)
+	retrying.FirstFailure = time.Now().Add(-30 * time.Minute)
+
+	scheduled := newWebcam()
+	scheduled.Name = "Next Cam"
+	scheduled.NextCaptureAt = time.Now().Add(45 * time.Minute)
+
+	srv.mu.Lock()
+	srv.webcams.Append(capturing)
+	srv.webcams.Append(retrying)
+	srv.webcams.Append(scheduled)
+	srv.mu.Unlock()
+
+	resp := decodeNextResp(t, srv)
+	if len(resp.Capturing) != 1 || resp.Capturing[0] != "Live Cam" {
+		t.Errorf("capturing: want [Live Cam], got %v", resp.Capturing)
+	}
+	if len(resp.Retrying) != 1 || resp.Retrying[0] != "Flaky Cam" {
+		t.Errorf("retrying: want [Flaky Cam], got %v", resp.Retrying)
+	}
+	if resp.Next == nil {
+		t.Fatal("next_scheduled: want entry, got nil")
+	}
+	if resp.Next.Webcam != "Next Cam" {
+		t.Errorf("next_scheduled.webcam: want %q, got %q", "Next Cam", resp.Next.Webcam)
 	}
 }
 
