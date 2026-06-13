@@ -14,6 +14,13 @@ const (
 	fcConfigInvalid   = "config_invalid"  // config file parsed but failed validation
 	fcRegistry        = "registry"        // Windows Registry read or write failed
 	fcInternalError   = "internal_error"  // should never occur in production
-	fcRenderFailure   = "render_failure"  // ffmpeg render failed (placeholder; Step 12b refines)
+	fcRenderNoFrames      = "render_no_frames"      // no .jpg files match the date filter
+	fcRenderFFmpegMissing = "render_ffmpeg_missing"  // ffmpeg binary not found on PATH
+	fcRenderCodecMissing  = "render_codec_missing"   // libx264 encoder not in ffmpeg build
+	fcRenderDiskFull      = "render_disk_full"       // no space left on device writing output
+	fcRenderPermission    = "render_permission"      // permission denied writing output
+	fcRenderCanceled      = "render_canceled"        // context canceled (app shutdown during render)
+	fcRenderFFmpegError   = "render_ffmpeg_error"    // unclassified ffmpeg failure
+	fcRenderInternal      = "render_internal"        // unexpected internal error (ReadDir, temp file)
 	fcMalformedTZ     = "malformed_timezone" // time.LoadLocation failed on a timezone string
 )

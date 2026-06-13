@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -533,9 +534,16 @@ func (s *server) handleRender() httprouter.Handle {
 		ctx := s.ctx
 		go func() {
 			if err := s.renderer.Render(ctx, dir, fullOutput, opts); err != nil {
-				slog.Info("render failed", "webcam", req.Folder, "output", fullOutput)
-				slog.Debug("handleRender: render failed", "webcam", req.Folder, "output", fullOutput, "failure_class", fcRenderFailure, "error", err)
-				s.renderJobs.Store(fullOutput, renderJobStatus{Status: "error", Message: err.Error()})
+				class, msg := fcRenderFFmpegError, err.Error()
+				debugErr := err // underlying technical error for debug log
+				var re *RenderError
+				if errors.As(err, &re) {
+					class, msg = re.Class, re.Message
+					debugErr = re.Err
+				}
+				slog.Info("render failed", "webcam", req.Folder, "output", fullOutput, "failure_class", class)
+				slog.Debug("handleRender: render failed", "webcam", req.Folder, "output", fullOutput, "failure_class", class, "error", debugErr)
+				s.renderJobs.Store(fullOutput, renderJobStatus{Status: "error", Message: msg})
 			} else {
 				ts := time.Now().Format("20060102_1504")
 				ext := filepath.Ext(fullOutput)

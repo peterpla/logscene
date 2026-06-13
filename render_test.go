@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,15 +16,29 @@ import (
 
 // TestLocalRenderer_Render_noFrames exercises the early-exit path when the
 // directory contains no image files.
+func assertNoFrames(t *testing.T, err error) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("expected RenderError, got nil")
+	}
+	var re *RenderError
+	if !errors.As(err, &re) || re.Class != fcRenderNoFrames {
+		t.Errorf("expected RenderError{Class:%q}, got: %v", fcRenderNoFrames, err)
+	}
+}
+
+func assertNotNoFrames(t *testing.T, err error) {
+	t.Helper()
+	var re *RenderError
+	if errors.As(err, &re) && re.Class == fcRenderNoFrames {
+		t.Errorf("unexpected no-frames error: %v", err)
+	}
+}
+
 func TestLocalRenderer_Render_noFrames(t *testing.T) {
 	r := NewLocalRenderer()
 	err := r.Render(context.Background(), t.TempDir(), "output.mp4", RenderOptions{})
-	if err == nil {
-		t.Fatal("expected error for empty directory, got nil")
-	}
-	if !strings.Contains(err.Error(), "no frames") {
-		t.Errorf("error should mention 'no frames': %v", err)
-	}
+	assertNoFrames(t, err)
 }
 
 // TestLocalRenderer_Render_dateFilter verifies that StartDate/EndDate filter
@@ -45,23 +60,19 @@ func TestLocalRenderer_Render_dateFilter(t *testing.T) {
 
 	r := NewLocalRenderer()
 
-	// Date range that matches no files → "no frames" error.
+	// Date range that matches no files → no-frames error.
 	err := r.Render(ctx, dir, filepath.Join(dir, "out.mp4"), RenderOptions{
 		StartDate: "20260701",
 		EndDate:   "20260731",
 	})
-	if err == nil || !strings.Contains(err.Error(), "no frames") {
-		t.Errorf("expected 'no frames' for out-of-range dates, got: %v", err)
-	}
+	assertNoFrames(t, err)
 
 	// Date range matching one file → proceeds past the frame guard.
 	err = r.Render(ctx, dir, filepath.Join(dir, "out2.mp4"), RenderOptions{
 		StartDate: "20260601",
 		EndDate:   "20260630",
 	})
-	if err != nil && strings.Contains(err.Error(), "no frames") {
-		t.Errorf("date filter excluded frames that should have matched: %v", err)
-	}
+	assertNotNoFrames(t, err)
 }
 
 // TestLocalRenderer_Render_readDirError exercises the ReadDir failure path.
@@ -73,9 +84,7 @@ func TestLocalRenderer_Render_readDirError(t *testing.T) {
 	if err == nil {
 		t.Error("expected error for nonexistent directory, got nil")
 	}
-	if strings.Contains(err.Error(), "no frames") {
-		t.Errorf("error should be a readdir failure, not 'no frames': %v", err)
-	}
+	assertNotNoFrames(t, err)
 }
 
 // TestLocalRenderer_Render_skipsNonImages verifies that subdirectories and
@@ -93,10 +102,7 @@ func TestLocalRenderer_Render_skipsNonImages(t *testing.T) {
 	}
 
 	r := NewLocalRenderer()
-	err := r.Render(ctx, dir, filepath.Join(dir, "out.mp4"), RenderOptions{})
-	if err == nil || !strings.Contains(err.Error(), "no frames") {
-		t.Errorf("expected 'no frames' when only non-images present, got: %v", err)
-	}
+	assertNoFrames(t, r.Render(ctx, dir, filepath.Join(dir, "out.mp4"), RenderOptions{}))
 }
 
 // TestLocalRenderer_Render_dateFilterEndDate verifies that frames dated after
@@ -118,11 +124,8 @@ func TestLocalRenderer_Render_dateFilterEndDate(t *testing.T) {
 	}
 
 	r := NewLocalRenderer()
-	err := r.Render(ctx, dir, filepath.Join(dir, "out.mp4"), RenderOptions{EndDate: "20260630"})
 	// One frame matches; Render proceeds past the "no frames" guard.
-	if err != nil && strings.Contains(err.Error(), "no frames") {
-		t.Errorf("expected at least one frame in range, got 'no frames': %v", err)
-	}
+	assertNotNoFrames(t, r.Render(ctx, dir, filepath.Join(dir, "out.mp4"), RenderOptions{EndDate: "20260630"}))
 }
 
 // TestLocalRenderer_Render_stride verifies that only every Nth frame is kept.
@@ -146,10 +149,7 @@ func TestLocalRenderer_Render_stride(t *testing.T) {
 
 	r := NewLocalRenderer()
 	// Stride 3 on 6 frames keeps indices 0 and 3 — 2 frames, not zero.
-	err := r.Render(ctx, dir, filepath.Join(dir, "out.mp4"), RenderOptions{Stride: 3, FPS: 24})
-	if err != nil && strings.Contains(err.Error(), "no frames") {
-		t.Fatalf("stride filter reduced to zero frames: %v", err)
-	}
+	assertNotNoFrames(t, r.Render(ctx, dir, filepath.Join(dir, "out.mp4"), RenderOptions{Stride: 3, FPS: 24}))
 }
 
 // TestLocalRenderer_Render_invokesFFmpeg writes real frame files to disk and
@@ -176,11 +176,56 @@ func TestLocalRenderer_Render_invokesFFmpeg(t *testing.T) {
 	err := r.Render(ctx, dir, filepath.Join(dir, "out.mp4"), RenderOptions{FPS: 24})
 
 	if err != nil {
-		if strings.Contains(err.Error(), "no frames") {
-			t.Fatalf("unexpected 'no frames' error — frames were written: %v", err)
-		}
+		assertNotNoFrames(t, err)
 		t.Logf("Render returned error (expected if ffmpeg not installed): %v", err)
 		return
 	}
 	t.Log("ffmpeg render succeeded")
+}
+
+// ---------------------------------------------------------------------------
+// classifyFFmpegError
+// ---------------------------------------------------------------------------
+
+func TestClassifyFFmpegError_canceled(t *testing.T) {
+	re := classifyFFmpegError(context.Canceled, "")
+	if re.Class != fcRenderCanceled {
+		t.Errorf("class: want %q, got %q", fcRenderCanceled, re.Class)
+	}
+}
+
+func TestClassifyFFmpegError_notFound(t *testing.T) {
+	err := &exec.Error{Name: "ffmpeg", Err: exec.ErrNotFound}
+	re := classifyFFmpegError(err, "")
+	if re.Class != fcRenderFFmpegMissing {
+		t.Errorf("class: want %q, got %q", fcRenderFFmpegMissing, re.Class)
+	}
+}
+
+func TestClassifyFFmpegError_codecMissing(t *testing.T) {
+	re := classifyFFmpegError(errors.New("exit 1"), "Encoder libx264 not found for output stream")
+	if re.Class != fcRenderCodecMissing {
+		t.Errorf("class: want %q, got %q", fcRenderCodecMissing, re.Class)
+	}
+}
+
+func TestClassifyFFmpegError_diskFull(t *testing.T) {
+	re := classifyFFmpegError(errors.New("exit 1"), "Error writing trailer: No space left on device")
+	if re.Class != fcRenderDiskFull {
+		t.Errorf("class: want %q, got %q", fcRenderDiskFull, re.Class)
+	}
+}
+
+func TestClassifyFFmpegError_permission(t *testing.T) {
+	re := classifyFFmpegError(errors.New("exit 1"), "output.mp4: Permission denied")
+	if re.Class != fcRenderPermission {
+		t.Errorf("class: want %q, got %q", fcRenderPermission, re.Class)
+	}
+}
+
+func TestClassifyFFmpegError_generic(t *testing.T) {
+	re := classifyFFmpegError(errors.New("exit 1"), "some unrecognised ffmpeg output")
+	if re.Class != fcRenderFFmpegError {
+		t.Errorf("class: want %q, got %q", fcRenderFFmpegError, re.Class)
+	}
 }
