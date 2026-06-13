@@ -141,3 +141,13 @@ func TestConfigPollFlagOverridesEnv(t *testing.T) {
 		t.Errorf("PollSecs = %d, want 45 (flag must take priority over LOGSCENE_POLL)", c.PollSecs)
 	}
 }
+
+func TestLoadFrom_invalidPollValue(t *testing.T) {
+	for _, bad := range []string{"bad", "-5", "0"} {
+		var c Config
+		c.loadFrom(newFS(), nil, envMap(map[string]string{"LOGSCENE_POLL": bad}))
+		if c.PollSecs != 60 {
+			t.Errorf("LOGSCENE_POLL=%q: PollSecs = %d, want 60 (default)", bad, c.PollSecs)
+		}
+	}
+}

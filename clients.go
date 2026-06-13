@@ -67,11 +67,7 @@ func (c *HTTPTimezoneClient) GetTimezone(ctx context.Context, lat, lng float64) 
 	rawURL := "http://api.timezonedb.com/v2.1/get-time-zone?" + q.Encode()
 
 	for {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-		if err != nil {
-			return "", fmt.Errorf("GetTimezone: build request: %w", err)
-		}
-
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 		resp, err := c.client.Do(req)
 		if err != nil {
 			return "", fmt.Errorf("GetTimezone: do request: %w", err)
@@ -164,11 +160,7 @@ func (c *HTTPSolarClient) GetSolarTimes(ctx context.Context, lat, lng float64, w
 	q.Set("formatted", "0")
 	rawURL := "https://api.sunrise-sunset.org/json?" + q.Encode()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return SolarTimes{}, fmt.Errorf("GetSolarTimes: build request: %w", err)
-	}
-
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return SolarTimes{}, fmt.Errorf("GetSolarTimes: do request: %w", err)

@@ -1574,6 +1574,24 @@ func TestWebcamCard_nextCaptureIncludesTimezone(t *testing.T) {
 	}
 }
 
+// TestWebcamCard_utcFallback verifies that when WebcamLoc is nil the displayed
+// time uses 24-hour UTC format instead of the webcam's local time.
+func TestWebcamCard_utcFallback(t *testing.T) {
+	wc := newWebcam()
+	wc.IntervalMinutes = 15
+	// WebcamLoc left nil
+	wc.NextCaptureAt = time.Date(2026, 6, 6, 14, 30, 0, 0, time.UTC)
+	wc.DayFirst = time.Date(2026, 6, 6, 6, 0, 0, 0, time.UTC)
+	wc.DayLast = time.Date(2026, 6, 6, 20, 0, 0, 0, time.UTC)
+
+	d := webcamCard(wc, t.TempDir())
+
+	want := "14:30 UTC"
+	if d.NextCapture != want {
+		t.Errorf("NextCapture: want %q, got %q", want, d.NextCapture)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // GET /latlong
 // ---------------------------------------------------------------------------
