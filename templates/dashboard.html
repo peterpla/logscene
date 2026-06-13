@@ -65,7 +65,7 @@
           <input type="text" class="form-control" id="renderOutput" placeholder="output.mp4">
           <div class="form-text" id="renderOutputPath"></div>
         </div>
-        <div class="row g-2 mb-3">
+        <div class="row g-2 mb-1">
           <div class="col">
             <label for="renderStart" class="form-label">Start date <span class="text-muted">(optional)</span></label>
             <input type="date" class="form-control" id="renderStart">
@@ -75,6 +75,7 @@
             <input type="date" class="form-control" id="renderEnd">
           </div>
         </div>
+        <div id="renderDateError" class="text-danger small mb-3" style="display:none"></div>
         <div class="mb-3">
           <label for="renderStride" class="form-label">Capture stride</label>
           <select class="form-select" id="renderStride">
@@ -97,6 +98,21 @@
 </div>
 
 <script>
+  // ── Date validation ─────────────────────────────────────────────
+  function validateDates() {
+    var start = document.getElementById('renderStart').value;
+    var end   = document.getElementById('renderEnd').value;
+    var el    = document.getElementById('renderDateError');
+    if (start && end && end < start) {
+      el.textContent = 'End date must be on or after start date.';
+      el.style.display = '';
+      return false;
+    }
+    el.textContent = '';
+    el.style.display = 'none';
+    return true;
+  }
+
   // ── Stride helpers ──────────────────────────────────────────────
   function buildStrideOptions(intervalMins) {
     var targets = [5, 10, 15, 30, 60, 120];
@@ -192,6 +208,7 @@
     document.getElementById('renderOutput').value = this._folder + '.mp4';
     document.getElementById('renderStatus').textContent = '';
     document.getElementById('renderSubmit').disabled = false;
+    document.getElementById('renderDateError').style.display = 'none';
     updateOutputPath();
 
     var sel = document.getElementById('renderStride');
@@ -210,8 +227,8 @@
 
   document.getElementById('renderOutput').addEventListener('input', updateOutputPath);
   document.getElementById('renderStride').addEventListener('change', updateRenderEstimate);
-  document.getElementById('renderStart').addEventListener('change', updateRenderEstimate);
-  document.getElementById('renderEnd').addEventListener('change', updateRenderEstimate);
+  document.getElementById('renderStart').addEventListener('change', function() { validateDates(); updateRenderEstimate(); });
+  document.getElementById('renderEnd').addEventListener('change', function() { validateDates(); updateRenderEstimate(); });
   document.getElementById('renderFPS').addEventListener('input', updateRenderEstimate);
 
   // ── Submit ──────────────────────────────────────────────────────
@@ -222,6 +239,7 @@
       document.getElementById('renderStatus').textContent = 'Output filename is required.';
       return;
     }
+    if (!validateDates()) return;
     var payload = {
       folder: folder,
       output: output,
