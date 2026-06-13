@@ -1,5 +1,8 @@
 {{define "content"}}
-<h5 class="mb-4">Logs</h5>
+<div class="d-flex align-items-center mb-4">
+  <h5 class="mb-0 me-3">Logs</h5>
+  <a href="/logs" class="btn btn-outline-secondary btn-sm">Refresh</a>
+</div>
 
 {{if .NotFound}}
 <div class="alert alert-secondary" role="alert">
