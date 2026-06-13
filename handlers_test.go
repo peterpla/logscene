@@ -46,7 +46,8 @@ func newTestServer(t *testing.T) *server {
 		cancel:       cancel,
 		webcamCtx:    webcamCtx,
 		webcamCancel: webcamCancel,
-		startTime:    time.Now(),
+		startTime:   time.Now(),
+		installDate: time.Now(),
 	}
 	// Registered last → runs first (LIFO): goroutines exit before temp dirs are removed.
 	t.Cleanup(func() {
@@ -885,62 +886,6 @@ func TestHandleRender_missingFields(t *testing.T) {
 // POST /render — trial enforcement
 // ---------------------------------------------------------------------------
 
-func TestHandleRender_trialReadOnly(t *testing.T) {
-	srv := newTestServer(t)
-	srv.trial = TrialReadOnly
-	srv.router.POST("/render", srv.handleRender())
-
-	body := `{"folder":"cam","output":"out.mp4"}`
-	req := httptest.NewRequest(http.MethodPost, "/render", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	srv.router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusForbidden {
-		t.Errorf("TrialReadOnly: want 403, got %d", w.Code)
-	}
-}
-
-func TestHandleRender_trialGraceRender_firstCall(t *testing.T) {
-	// Ensure a clean slate in the registry before and after the test.
-	writeLastRenderDate("") //nolint:errcheck
-	t.Cleanup(func() { writeLastRenderDate("") }) //nolint:errcheck
-
-	srv := newTestServer(t)
-	srv.trial = TrialGraceRender
-	srv.renderer = &mockRenderer{}
-	srv.router.POST("/render", srv.handleRender())
-
-	body := `{"folder":"cam","output":"out.mp4"}`
-	req := httptest.NewRequest(http.MethodPost, "/render", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	srv.router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("GraceRender first call: want 200, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestHandleRender_trialGraceRender_secondCallSameDay(t *testing.T) {
-	today := time.Now().Format("2006-01-02")
-	writeLastRenderDate(today) //nolint:errcheck
-	t.Cleanup(func() { writeLastRenderDate("") }) //nolint:errcheck
-
-	srv := newTestServer(t)
-	srv.trial = TrialGraceRender
-	srv.router.POST("/render", srv.handleRender())
-
-	body := `{"folder":"cam","output":"out.mp4"}`
-	req := httptest.NewRequest(http.MethodPost, "/render", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	srv.router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusForbidden {
-		t.Errorf("GraceRender second call same day: want 403, got %d", w.Code)
-	}
-}
 
 // ---------------------------------------------------------------------------
 // GET /render/status
@@ -1028,7 +973,7 @@ func TestHandleRenderStatus_missingParam(t *testing.T) {
 
 func TestHandleNew_trialCapturesStopped(t *testing.T) {
 	srv := newTestServer(t)
-	srv.trial = TrialGraceRender
+	srv.trial = TrialExpired
 	srv.router.POST("/new", srv.handleNew())
 
 	form := url.Values{}
@@ -1139,7 +1084,7 @@ func TestHandleReload_badConfig(t *testing.T) {
 
 func TestHandleReload_capturesStopped(t *testing.T) {
 	srv := newTestServer(t)
-	srv.trial = TrialGraceRender
+	srv.trial = TrialExpired
 	writeEmptyConfig(t, srv)
 	srv.router.POST("/reload", srv.handleReload())
 
@@ -1335,7 +1280,7 @@ func TestHandleGetNew_activeForm(t *testing.T) {
 
 func TestHandleGetNew_capturesStopped(t *testing.T) {
 	srv := newTestServer(t)
-	srv.trial = TrialGraceRender
+	srv.trial = TrialExpired
 	if err := srv.initTemplates(); err != nil {
 		t.Fatalf("initTemplates: %v", err)
 	}
@@ -1536,41 +1481,51 @@ func TestHandleHome_trialWarning(t *testing.T) {
 	assertNoHTML(t, body, `alert-danger`)
 }
 
-func TestHandleHome_trialGraceRender(t *testing.T) {
+func TestHandleHome_trialExpired(t *testing.T) {
 	srv := newTestServer(t)
-	srv.trial = TrialGraceRender
+	srv.trial = TrialExpired
 	if err := srv.initTemplates(); err != nil {
 		t.Fatalf("initTemplates: %v", err)
 	}
 	srv.router.GET("/", srv.handleHome())
 
 	_, body := getBody(t, srv, "/")
+	assertHTML(t, body, `free trial has ended`)
 	assertHTML(t, body, `Captures have stopped`)
 	assertHTML(t, body, `nav-link-disabled`)
 	assertHTML(t, body, `disabled title="Upgrade to add webcams"`)
+	assertNoHTML(t, body, `Upgrade to render`)
 }
 
-func TestHandleHome_trialReadOnly(t *testing.T) {
+// ---------------------------------------------------------------------------
+// Dashboard trial countdown
+// ---------------------------------------------------------------------------
+
+func TestHandleHome_countdownMuted(t *testing.T) {
 	srv := newTestServer(t)
-	srv.trial = TrialReadOnly
+	srv.installDate = time.Now().AddDate(0, 0, -10) // day 10 → DaysRemaining=20
 	if err := srv.initTemplates(); err != nil {
 		t.Fatalf("initTemplates: %v", err)
 	}
 	srv.router.GET("/", srv.handleHome())
 
-	wc := newWebcam()
-	wc.Name = "Old Cam"
-	wc.IntervalMinutes = 60
-	wc.DayFirst = time.Now().Add(-3 * time.Hour)
-	wc.DayLast = time.Now().Add(2 * time.Hour)
-	wc.NextCaptureAt = time.Now().Add(time.Hour)
-	srv.mu.Lock()
-	srv.webcams.Append(wc)
-	srv.mu.Unlock()
+	_, body := getBody(t, srv, "/")
+	assertHTML(t, body, `Trial: 20 days remaining`)
+	assertNoHTML(t, body, `Trial expires`)
+}
+
+func TestHandleHome_countdownAmber(t *testing.T) {
+	srv := newTestServer(t)
+	srv.installDate = time.Now().AddDate(0, 0, -27) // day 27 → DaysRemaining=3
+	if err := srv.initTemplates(); err != nil {
+		t.Fatalf("initTemplates: %v", err)
+	}
+	srv.router.GET("/", srv.handleHome())
 
 	_, body := getBody(t, srv, "/")
-	assertHTML(t, body, `trial has ended`)
-	assertHTML(t, body, `disabled title="Upgrade to render"`)
+	assertHTML(t, body, `Trial expires`)
+	assertHTML(t, body, `3 days remaining`)
+	assertNoHTML(t, body, `Trial: 3 days remaining`)
 }
 
 // ---------------------------------------------------------------------------

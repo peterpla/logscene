@@ -10,6 +10,3 @@ import "time"
 // always run in active-trial state.
 func readOrSetInstallDate() (time.Time, error) { return time.Now(), nil }
 
-func readLastRenderDate() (string, error) { return "", nil }
-
-func writeLastRenderDate(string) error { return nil }

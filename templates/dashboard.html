@@ -1,4 +1,12 @@
 {{define "content"}}
+{{if and (not .Trial.CapturesStopped) (not .Trial.IsWarning)}}
+{{if le .DaysRemaining 4}}
+<p class="text-warning small mb-3">Trial expires {{.ExpiryDate}} — {{.DaysRemaining}} day{{if ne .DaysRemaining 1}}s{{end}} remaining. <a href="#">Upgrade</a> to keep captures running.</p>
+{{else}}
+<p class="text-muted small mb-3">Trial: {{.DaysRemaining}} day{{if ne .DaysRemaining 1}}s{{end}} remaining</p>
+{{end}}
+{{end}}
+
 <div class="d-flex justify-content-between align-items-center mb-4">
   <h5 class="mb-0">Dashboard</h5>
   {{if .Trial.CapturesStopped}}
@@ -33,9 +41,7 @@
         </div>
       </div>
       <div class="card-footer bg-transparent border-top-0 pt-0">
-        {{if $.Trial.IsReadOnly}}
-        <button class="btn btn-sm btn-outline-secondary" disabled title="Upgrade to render">Render</button>
-        {{else if not .CanRender}}
+        {{if not .CanRender}}
         <button class="btn btn-sm btn-outline-secondary" disabled title="Requires 2 or more captures">Render</button>
         {{else}}
         <button class="btn btn-sm btn-outline-primary"

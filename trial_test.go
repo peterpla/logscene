@@ -16,10 +16,10 @@ func TestComputeTrialState(t *testing.T) {
 		{1, TrialActive},
 		{29, TrialActive},
 		{30, TrialWarning},
-		{31, TrialGraceRender},
-		{37, TrialGraceRender},
-		{38, TrialReadOnly},
-		{100, TrialReadOnly},
+		{31, TrialExpired},
+		{37, TrialExpired},
+		{38, TrialExpired},
+		{100, TrialExpired},
 	}
 	for _, tc := range cases {
 		installDate := time.Now().AddDate(0, 0, -tc.daysAgo)
@@ -37,8 +37,7 @@ func TestTrialStateString(t *testing.T) {
 	}{
 		{TrialActive, "active"},
 		{TrialWarning, "warning"},
-		{TrialGraceRender, "grace-render"},
-		{TrialReadOnly, "read-only"},
+		{TrialExpired, "expired"},
 		{TrialState(99), "unknown"},
 	}
 	for _, tc := range cases {

@@ -39,11 +39,13 @@ type webcamCardData struct {
 
 // dashboardData is the template context for the dashboard page.
 type dashboardData struct {
-	Page       string
-	Title      string
-	Trial      TrialState
-	Webcams    []webcamCardData
-	RendersDir string // OS-native path to BaseDir/renders for display in render modal
+	Page          string
+	Title         string
+	Trial         TrialState
+	Webcams       []webcamCardData
+	RendersDir    string // OS-native path to BaseDir/renders for display in render modal
+	DaysRemaining int    // days until trial expires; 0 on day 30, negative after
+	ExpiryDate    string // formatted expiry date for amber countdown display
 }
 
 // newWebcamData is the template context for the add-webcam form.
@@ -169,12 +171,19 @@ func (s *server) handleHome() httprouter.Handle {
 		trial := s.trial
 		s.mu.RUnlock()
 
+		daysElapsed := int(time.Since(s.installDate).Hours() / 24)
+		daysRemaining := 30 - daysElapsed
+		if daysRemaining < 0 {
+			daysRemaining = 0
+		}
 		data := dashboardData{
-			Page:       "dashboard",
-			Title:      "Dashboard",
-			Trial:      trial,
-			Webcams:    cards,
-			RendersDir: filepath.Join(filepath.FromSlash(s.config.BaseDir), "renders"),
+			Page:          "dashboard",
+			Title:         "Dashboard",
+			Trial:         trial,
+			Webcams:       cards,
+			RendersDir:    filepath.Join(filepath.FromSlash(s.config.BaseDir), "renders"),
+			DaysRemaining: daysRemaining,
+			ExpiryDate:    s.installDate.AddDate(0, 0, 30).Format("January 2, 2006"),
 		}
 		if err := s.tmplDashboard.ExecuteTemplate(w, "base", data); err != nil {
 			slog.Debug("template execution error", "handler", "handleHome", "failure_class", fcInternalError, "error", err)
@@ -489,20 +498,6 @@ type renderRequest struct {
 // handleRender triggers an ffmpeg render for a stored folder of images.
 func (s *server) handleRender() httprouter.Handle {
 	return func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
-		switch s.trial {
-		case TrialReadOnly:
-			http.Error(w, "trial period ended — upgrade to render", http.StatusForbidden)
-			return
-		case TrialGraceRender:
-			today := time.Now().Format("2006-01-02")
-			last, err := readLastRenderDate()
-			if err == nil && last == today {
-				http.Error(w, "grace period: one render per day — try again tomorrow", http.StatusForbidden)
-				return
-			}
-			_ = writeLastRenderDate(today)
-		}
-
 		var req renderRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)

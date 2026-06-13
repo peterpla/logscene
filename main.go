@@ -49,6 +49,7 @@ type server struct {
 	webcamWg     sync.WaitGroup     // capture goroutines only
 	mu           sync.RWMutex       // protects webcams, webcamCtx, webcamCancel
 	startTime    time.Time
+	installDate  time.Time
 	trial        TrialState
 	renderJobs   sync.Map // fullOutputPath → renderJobStatus; entries deleted after first terminal read
 }
@@ -234,8 +235,9 @@ func newServer() *server {
 		cancel:       cancel,
 		webcamCtx:    webcamCtx,
 		webcamCancel: webcamCancel,
-		startTime:    time.Now(),
-		trial:        trial,
+		startTime:   time.Now(),
+		installDate: installDate,
+		trial:       trial,
 	}
 	return s
 }
