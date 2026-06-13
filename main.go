@@ -31,10 +31,11 @@ type server struct {
 	router        *httprouter.Router
 	validate      *validator.Validate
 	config        *Config
-	tmplDashboard *template.Template
-	tmplNewWebcam *template.Template
-	tmplLatlong   *template.Template
-	tmplLogs      *template.Template
+	tmplDashboard    *template.Template
+	tmplNewWebcam    *template.Template
+	tmplLatlong      *template.Template
+	tmplLogs         *template.Template
+	tmplWriteFailure *template.Template
 	webcams      *Webcams       // all configured webcams; protected by mu
 	storage      Storage
 	renderer     Renderer

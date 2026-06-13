@@ -50,6 +50,56 @@ type newWebcamData struct {
 	Trial TrialState
 }
 
+// writeFailureData is the template context for the Write failure modal.
+type writeFailureData struct {
+	Page          string
+	Title         string
+	Trial         TrialState
+	Webcam        *Webcam
+	SourceLabel   string // "URL" or "Device"
+	SourceValue   string // wc.URL or wc.DeviceName
+	ScheduleDesc  string // "sunrise to sunset−30 min"
+	ClipboardText string
+}
+
+// writeFailureFields computes the display and clipboard fields for writeFailureData.
+func writeFailureFields(wc *Webcam) (sourceLabel, sourceValue, scheduleDesc, clipboardText string) {
+	if wc.SourceType == "usb" || wc.SourceType == "stream" {
+		sourceLabel, sourceValue = "Device", wc.DeviceName
+	} else {
+		sourceLabel, sourceValue = "URL", wc.URL
+	}
+
+	var first, last string
+	switch {
+	case wc.FirstSunrise:
+		first = "sunrise"
+	case wc.FirstSunrise30:
+		first = "sunrise+30 min"
+	case wc.FirstSunrise60:
+		first = "sunrise+60 min"
+	case wc.FirstTime:
+		first = wc.FirstTimeValue
+	}
+	switch {
+	case wc.LastSunset:
+		last = "sunset"
+	case wc.LastSunset30:
+		last = "sunset−30 min"
+	case wc.LastSunset60:
+		last = "sunset−60 min"
+	case wc.LastTime:
+		last = wc.LastTimeValue
+	}
+	scheduleDesc = first + " to " + last
+
+	clipboardText = fmt.Sprintf(
+		"Name: %s\n%s: %s\nLatitude: %g\nLongitude: %g\nFolder: %s\nInterval: %d minutes\nSchedule: %s",
+		wc.Name, sourceLabel, sourceValue, wc.Latitude, wc.Longitude, wc.Folder, wc.IntervalMinutes, scheduleDesc,
+	)
+	return
+}
+
 // webcamCard builds display data from a live Webcam, holding its read lock.
 func webcamCard(wc *Webcam) webcamCardData {
 	wc.mu.RLock()
@@ -248,16 +298,33 @@ func (s *server) handleNew() httprouter.Handle {
 			return
 		}
 		s.webcams.Append(wc)
+		trial := s.trial
 		wcCtx := s.webcamCtx
-		s.webcamWg.Add(1)
 		s.mu.Unlock()
 
 		if err := s.webcams.Write(s.config.Path, s.validate); err != nil {
-			log.Printf("handleNew: Write: %v", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			s.mu.Lock()
+			s.webcams = s.webcams.Delete(wc.Name)
+			s.mu.Unlock()
+			sl, sv, sd, ct := writeFailureFields(wc)
+			data := writeFailureData{
+				Page:          "new-webcam",
+				Title:         "Webcam Not Saved",
+				Trial:         trial,
+				Webcam:        wc,
+				SourceLabel:   sl,
+				SourceValue:   sv,
+				ScheduleDesc:  sd,
+				ClipboardText: ct,
+			}
+			w.WriteHeader(http.StatusInternalServerError)
+			if tmplErr := s.tmplWriteFailure.ExecuteTemplate(w, "base", data); tmplErr != nil {
+				log.Printf("handleNew: write failure template: %v", tmplErr)
+			}
 			return
 		}
 
+		s.webcamWg.Add(1)
 		go capture(wcCtx, wc, time.Duration(s.config.PollSecs)*time.Second, s)
 
 		http.Redirect(w, r, "/", http.StatusSeeOther)
@@ -649,6 +716,9 @@ func (s *server) initTemplates() error {
 		return err
 	}
 	if s.tmplLogs, err = parse("logs"); err != nil {
+		return err
+	}
+	if s.tmplWriteFailure, err = parse("write_failure"); err != nil {
 		return err
 	}
 	return nil

@@ -1,0 +1,66 @@
+{{define "content"}}
+<div class="modal fade show d-block" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false" aria-modal="true" role="dialog">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+
+      <div class="modal-header border-danger">
+        <h5 class="modal-title text-danger">Webcam could not be saved</h5>
+      </div>
+
+      <div class="modal-body">
+        <p class="mb-3">Your settings could not be written to disk. Copy them below before continuing — they will not be retained.</p>
+
+        <dl class="row mb-3">
+          <dt class="col-sm-4">Name</dt>
+          <dd class="col-sm-8">{{.Webcam.Name}}</dd>
+
+          <dt class="col-sm-4">{{.SourceLabel}}</dt>
+          <dd class="col-sm-8 text-break">{{.SourceValue}}</dd>
+
+          <dt class="col-sm-4">Latitude</dt>
+          <dd class="col-sm-8">{{.Webcam.Latitude}}</dd>
+
+          <dt class="col-sm-4">Longitude</dt>
+          <dd class="col-sm-8">{{.Webcam.Longitude}}</dd>
+
+          <dt class="col-sm-4">Folder</dt>
+          <dd class="col-sm-8">{{.Webcam.Folder}}</dd>
+
+          <dt class="col-sm-4">Interval</dt>
+          <dd class="col-sm-8">{{.Webcam.IntervalMinutes}} minutes</dd>
+
+          <dt class="col-sm-4">Schedule</dt>
+          <dd class="col-sm-8">{{.ScheduleDesc}}</dd>
+        </dl>
+
+        <textarea id="settingsText" class="visually-hidden" readonly>{{.ClipboardText}}</textarea>
+        <button type="button" id="copyBtn" class="btn btn-outline-secondary btn-sm" onclick="copySettings()">
+          Copy settings to clipboard
+        </button>
+      </div>
+
+      <div class="modal-footer">
+        {{/* TODO Step 4.8: wire to assembleSupportBundle */}}
+        <button type="button" class="btn btn-outline-secondary">Send Diagnostic</button>
+        <a id="continueBtn" href="/new" class="btn btn-primary disabled" aria-disabled="true">Continue</a>
+      </div>
+
+    </div>
+  </div>
+</div>
+<div class="modal-backdrop fade show"></div>
+
+<script>
+function copySettings() {
+  var text = document.getElementById('settingsText').value;
+  navigator.clipboard.writeText(text).then(function() {
+    var copyBtn = document.getElementById('copyBtn');
+    copyBtn.textContent = 'Copied ✓';
+    copyBtn.disabled = true;
+    var continueBtn = document.getElementById('continueBtn');
+    continueBtn.classList.remove('disabled');
+    continueBtn.removeAttribute('aria-disabled');
+  });
+}
+</script>
+{{end}}

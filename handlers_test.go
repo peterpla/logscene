@@ -1418,6 +1418,164 @@ func TestHandleGetLatlong(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// writeFailureFields
+// ---------------------------------------------------------------------------
+
+func TestWriteFailureFields_sourceLabel(t *testing.T) {
+	cases := []struct {
+		sourceType string
+		url        string
+		device     string
+		wantLabel  string
+		wantValue  string
+	}{
+		{"url", "http://cam.example.com/img.jpg", "", "URL", "http://cam.example.com/img.jpg"},
+		{"usb", "", "Logitech C920", "Device", "Logitech C920"},
+		{"stream", "", "rtsp://10.0.0.1/stream", "Device", "rtsp://10.0.0.1/stream"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.sourceType, func(t *testing.T) {
+			wc := newWebcam()
+			wc.SourceType = tc.sourceType
+			wc.URL = tc.url
+			wc.DeviceName = tc.device
+			wc.FirstSunrise = true
+			wc.LastSunset = true
+			sl, sv, _, ct := writeFailureFields(wc)
+			if sl != tc.wantLabel {
+				t.Errorf("sourceLabel: want %q, got %q", tc.wantLabel, sl)
+			}
+			if sv != tc.wantValue {
+				t.Errorf("sourceValue: want %q, got %q", tc.wantValue, sv)
+			}
+			if !strings.Contains(ct, tc.wantLabel) {
+				t.Errorf("clipboardText missing label %q: %s", tc.wantLabel, ct)
+			}
+			if !strings.Contains(ct, tc.wantValue) {
+				t.Errorf("clipboardText missing value %q: %s", tc.wantValue, ct)
+			}
+		})
+	}
+}
+
+func TestWriteFailureFields_scheduleDesc(t *testing.T) {
+	cases := []struct {
+		name         string
+		setupWc      func(*Webcam)
+		wantSchedule string
+	}{
+		{
+			"sunrise to sunset",
+			func(wc *Webcam) { wc.FirstSunrise = true; wc.LastSunset = true },
+			"sunrise to sunset",
+		},
+		{
+			"sunrise+30 to sunset-30",
+			func(wc *Webcam) { wc.FirstSunrise30 = true; wc.LastSunset30 = true },
+			"sunrise+30 min to sunset−30 min",
+		},
+		{
+			"sunrise+60 to sunset-60",
+			func(wc *Webcam) { wc.FirstSunrise60 = true; wc.LastSunset60 = true },
+			"sunrise+60 min to sunset−60 min",
+		},
+		{
+			"fixed times",
+			func(wc *Webcam) { wc.FirstTime = true; wc.FirstTimeValue = "07:00"; wc.LastTime = true; wc.LastTimeValue = "19:00" },
+			"07:00 to 19:00",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			wc := newWebcam()
+			tc.setupWc(wc)
+			_, _, sd, ct := writeFailureFields(wc)
+			if sd != tc.wantSchedule {
+				t.Errorf("scheduleDesc: want %q, got %q", tc.wantSchedule, sd)
+			}
+			if !strings.Contains(ct, tc.wantSchedule) {
+				t.Errorf("clipboardText missing schedule %q: %s", tc.wantSchedule, ct)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// POST /new — Write failure path
+// ---------------------------------------------------------------------------
+
+// validNewWebcamForm returns a minimal valid form for POST /new.
+func validNewWebcamForm() url.Values {
+	form := url.Values{}
+	form.Set("name", "Test Cam")
+	form.Set("webcamUrl", "http://example.com/cam.jpg")
+	form.Set("latitude", "37.77")
+	form.Set("longitude", "-122.42")
+	form.Set("intervalMinutes", "15")
+	form.Set("folder", "test-cam")
+	form.Set("firstOption", "firstSunrise")
+	form.Set("lastOption", "lastSunset")
+	return form
+}
+
+// newWriteFailServer builds a test server whose config.Path points at a
+// nonexistent subdirectory so Webcams.Write always fails.
+func newWriteFailServer(t *testing.T) *server {
+	t.Helper()
+	srv := newTestServer(t)
+	srv.config.Path = filepath.Join(srv.config.Path, "nonexistent")
+	if err := srv.initTemplates(); err != nil {
+		t.Fatalf("initTemplates: %v", err)
+	}
+	srv.router.POST("/new", srv.handleNew())
+	return srv
+}
+
+// postNewForm posts a url.Values form to POST /new and returns the recorder.
+func postNewForm(t *testing.T, srv *server, form url.Values) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/new", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+	return w
+}
+
+func TestHandleNew_writeFails_returns500(t *testing.T) {
+	srv := newWriteFailServer(t)
+	w := postNewForm(t, srv, validNewWebcamForm())
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("write fail: want 500, got %d", w.Code)
+	}
+}
+
+func TestHandleNew_writeFails_rendersModal(t *testing.T) {
+	srv := newWriteFailServer(t)
+	w := postNewForm(t, srv, validNewWebcamForm())
+	body := w.Body.String()
+	assertHTML(t, body, "Webcam could not be saved")
+	assertHTML(t, body, "Test Cam")
+	assertHTML(t, body, "Copy settings to clipboard")
+	assertHTML(t, body, "Send Diagnostic")
+	assertHTML(t, body, "Continue")
+}
+
+// TestHandleNew_writeFails_rollback verifies the webcam is not retained in
+// memory after a failed Write. The WaitGroup leak (Add without goroutine) is
+// implicitly covered: newTestServer registers cleanup as webcamWg.Wait(), which
+// would hang the test if Add(1) were called without a matching goroutine exit.
+func TestHandleNew_writeFails_rollback(t *testing.T) {
+	srv := newWriteFailServer(t)
+	postNewForm(t, srv, validNewWebcamForm())
+	srv.mu.RLock()
+	n := len(*srv.webcams)
+	srv.mu.RUnlock()
+	if n != 0 {
+		t.Errorf("write fail: want 0 webcams after rollback, got %d", n)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // POST /probe
 // ---------------------------------------------------------------------------
 
