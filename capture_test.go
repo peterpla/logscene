@@ -4,13 +4,15 @@ package main
 
 // capture_test.go tests CaptureImage, the graduated outage-backoff methods
 // (recordFailure, recordSuccess, shouldAttemptNow, autoSuspendDue),
-// IsTimeForCapture, and UpdateNextCapture.
+// IsTimeForCapture, UpdateNextCapture, and startup seeding of CaptureCountToday.
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -835,5 +837,165 @@ func BenchmarkCaptureViaFfmpeg_withCrop(b *testing.B) {
 		if _, err := captureViaFfmpeg(ctx, args, store, "bench/frame.jpg"); err != nil {
 			b.Fatalf("captureViaFfmpeg: %v", err)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Startup seeding of CaptureCountToday / ScheduledCountToday
+// ---------------------------------------------------------------------------
+
+// createCaptureFile writes a minimal placeholder file named as targetKey would
+// produce: "<camName> <YYYYMMDDhhmmss>.jpg" inside folder.
+func createCaptureFile(t *testing.T, folder, camName string, ts time.Time) {
+	t.Helper()
+	name := camName + " " + ts.UTC().Format("20060102150405") + ".jpg"
+	if err := os.WriteFile(filepath.Join(folder, name), []byte("x"), 0644); err != nil {
+		t.Fatalf("createCaptureFile: %v", err)
+	}
+}
+
+// waitForSeeding polls until ScheduledCountToday is set (written in the same
+// mutex lock as CaptureCountToday), confirming the seeding block has run.
+func waitForSeeding(t *testing.T, wc *Webcam) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+		wc.mu.RLock()
+		done := wc.ScheduledCountToday > 0
+		wc.mu.RUnlock()
+		if done {
+			return
+		}
+	}
+	t.Fatal("timed out waiting for startup seeding to complete")
+}
+
+// seedingServer returns a test server whose solar client returns the given
+// DayFirst (Sunrise) and DayLast (Sunset). Dates in 2040 ensure
+// firstFutureCapture sees them as future and never triggers a rollover.
+func seedingServer(t *testing.T, dayFirst, dayLast time.Time) *server {
+	t.Helper()
+	srv := newTestServer(t)
+	srv.solar = &fixedSolarClient{times: SolarTimes{
+		Sunrise:   dayFirst,
+		SolarNoon: dayFirst.Add(6 * time.Hour),
+		Sunset:    dayLast,
+	}}
+	return srv
+}
+
+// seedingWebcam returns a testWebcam pre-loaded with the LA timezone so
+// SetCaptureTimes uses the cached value without a live API call.
+func seedingWebcam(t *testing.T) *Webcam {
+	t.Helper()
+	loc, _ := time.LoadLocation("America/Los_Angeles")
+	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 15)
+	wc.mu.Lock()
+	wc.WebcamLoc = loc
+	wc.WebcamTZ = "America/Los_Angeles"
+	wc.mu.Unlock()
+	return wc
+}
+
+// TestCapture_seeding_countsFilesInRange verifies that only files with
+// timestamps in [DayFirst, DayLast] are counted; files outside are excluded.
+func TestCapture_seeding_countsFilesInRange(t *testing.T) {
+	dayFirst := time.Date(2040, 1, 15, 13, 0, 0, 0, time.UTC)
+	dayLast := time.Date(2040, 1, 16, 3, 0, 0, 0, time.UTC)
+	srv := seedingServer(t, dayFirst, dayLast)
+	wc := seedingWebcam(t)
+
+	folder := filepath.Join(srv.config.BaseDir, wc.Folder)
+	if err := os.MkdirAll(folder, 0755); err != nil {
+		t.Fatal(err)
+	}
+	createCaptureFile(t, folder, wc.Name, dayFirst.Add(-time.Hour)) // before DayFirst — excluded
+	createCaptureFile(t, folder, wc.Name, dayFirst)                  // at DayFirst — counted
+	createCaptureFile(t, folder, wc.Name, dayFirst.Add(time.Hour))   // within — counted
+	createCaptureFile(t, folder, wc.Name, dayLast)                   // at DayLast — counted
+	createCaptureFile(t, folder, wc.Name, dayLast.Add(time.Hour))    // after DayLast — excluded
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	srv.webcamWg.Add(1)
+	go capture(ctx, wc, time.Millisecond, srv)
+	waitForSeeding(t, wc)
+	cancel()
+	srv.webcamWg.Wait()
+
+	wc.mu.RLock()
+	got := wc.CaptureCountToday
+	wc.mu.RUnlock()
+	if got != 3 {
+		t.Errorf("CaptureCountToday: want 3, got %d", got)
+	}
+}
+
+// TestCapture_seeding_excludesPriorDayAcrossUTCMidnight is the regression test
+// for the UTC-midnight boundary bug. PDT captures from late in the previous
+// local day (e.g., 17:00–22:59 PDT) fall after midnight UTC and therefore carry
+// the same UTC date as DayFirst. The old single-date glob caught them; the fix
+// must not count them.
+func TestCapture_seeding_excludesPriorDayAcrossUTCMidnight(t *testing.T) {
+	// PDT schedule: 06:00–20:00 PDT = 13:00 UTC Jan 15 – 03:00 UTC Jan 16.
+	// Files from Jan 14 PDT evening land in 00:00–12:59 UTC Jan 15 — same UTC
+	// date as DayFirst but before it; the old glob "*20400115*" counted them.
+	dayFirst := time.Date(2040, 1, 15, 13, 0, 0, 0, time.UTC) // 06:00 PDT Jan 15
+	dayLast := time.Date(2040, 1, 16, 3, 0, 0, 0, time.UTC)   // 20:00 PDT Jan 15
+	srv := seedingServer(t, dayFirst, dayLast)
+	wc := seedingWebcam(t)
+
+	folder := filepath.Join(srv.config.BaseDir, wc.Folder)
+	if err := os.MkdirAll(folder, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Jan 14 PDT evening → UTC timestamps on Jan 15 but before DayFirst.
+	// Must NOT be counted.
+	createCaptureFile(t, folder, wc.Name, time.Date(2040, 1, 15, 0, 0, 0, 0, time.UTC))    // 17:00 PDT Jan 14
+	createCaptureFile(t, folder, wc.Name, time.Date(2040, 1, 15, 5, 0, 0, 0, time.UTC))    // 22:00 PDT Jan 14
+	createCaptureFile(t, folder, wc.Name, time.Date(2040, 1, 15, 12, 59, 0, 0, time.UTC))  // one minute before DayFirst
+	// Jan 15 PDT captures within DayFirst..DayLast. Must be counted.
+	createCaptureFile(t, folder, wc.Name, dayFirst)                          // 06:00 PDT Jan 15
+	createCaptureFile(t, folder, wc.Name, dayFirst.Add(time.Hour))           // 07:00 PDT Jan 15
+	createCaptureFile(t, folder, wc.Name, dayLast)                           // 20:00 PDT Jan 15
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	srv.webcamWg.Add(1)
+	go capture(ctx, wc, time.Millisecond, srv)
+	waitForSeeding(t, wc)
+	cancel()
+	srv.webcamWg.Wait()
+
+	wc.mu.RLock()
+	got := wc.CaptureCountToday
+	wc.mu.RUnlock()
+	if got != 3 {
+		t.Errorf("CaptureCountToday: want 3 (only Jan 15 PDT captures), got %d", got)
+	}
+}
+
+// TestCapture_seeding_scheduledCountToday verifies ScheduledCountToday is
+// computed as int(DayLast−DayFirst / interval) + 1.
+func TestCapture_seeding_scheduledCountToday(t *testing.T) {
+	dayFirst := time.Date(2040, 6, 1, 13, 0, 0, 0, time.UTC)
+	dayLast := dayFirst.Add(3 * time.Hour) // 3-hour window at 15-min interval → 13 captures
+	srv := seedingServer(t, dayFirst, dayLast)
+	wc := seedingWebcam(t) // interval = 15 min
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	srv.webcamWg.Add(1)
+	go capture(ctx, wc, time.Millisecond, srv)
+	waitForSeeding(t, wc)
+	cancel()
+	srv.webcamWg.Wait()
+
+	wc.mu.RLock()
+	got := wc.ScheduledCountToday
+	wc.mu.RUnlock()
+	if got != 13 { // int(3h / 15min) + 1 = 12 + 1
+		t.Errorf("ScheduledCountToday: want 13, got %d", got)
 	}
 }

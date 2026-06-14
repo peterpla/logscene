@@ -130,14 +130,25 @@ func capture(ctx context.Context, wc *Webcam, pollInterval time.Duration, srv *s
 	wc.mu.RUnlock()
 
 	// Seed CaptureCountToday by counting existing capture files for today's
-	// schedule date (handles mid-day restarts). Compute ScheduledCountToday
-	// from the day's first/last capture times and interval.
-	if !snapFirst.IsZero() {
-		dateStr := snapFirst.UTC().Format("20060102")
-		matches, _ := filepath.Glob(filepath.Join(srv.config.BaseDir, wc.Folder, "*"+dateStr+"*"))
+	// schedule (handles mid-day restarts). Filenames embed UTC timestamps
+	// (YYYYMMDDhhmmss), so we filter by comparing against [DayFirst, DayLast]
+	// rather than a single UTC-date glob, which would miscount captures from
+	// the previous local day that happened to fall after midnight UTC.
+	if !snapFirst.IsZero() && !snapLast.IsZero() {
+		allFiles, _ := filepath.Glob(filepath.Join(srv.config.BaseDir, wc.Folder, wc.Name+" *"))
+		firstStr := snapFirst.UTC().Format("20060102150405")
+		lastStr := snapLast.UTC().Format("20060102150405")
+		var count int
+		for _, f := range allFiles {
+			base := filepath.Base(f)
+			// base = "Name YYYYMMDDhhmmss.ext"; skip "Name "
+			if ts := base[len(wc.Name)+1:]; len(ts) >= 14 && ts[:14] >= firstStr && ts[:14] <= lastStr {
+				count++
+			}
+		}
 		interval := time.Duration(snapInterval) * time.Minute
 		wc.mu.Lock()
-		wc.CaptureCountToday = len(matches)
+		wc.CaptureCountToday = count
 		if interval > 0 {
 			wc.ScheduledCountToday = int(snapLast.Sub(snapFirst)/interval) + 1
 		}
