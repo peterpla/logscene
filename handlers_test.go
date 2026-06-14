@@ -1104,6 +1104,382 @@ func TestHandleNew_trialSecondWebcamBlocked(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// GET /edit/:name + POST /edit/:name
+// ---------------------------------------------------------------------------
+
+func TestHandleGetEdit_found(t *testing.T) {
+	srv := newTestServer(t)
+	if err := srv.initTemplates(); err != nil {
+		t.Fatalf("initTemplates: %v", err)
+	}
+	wc := testWebcam(t, flagFirstSunrise30, flagLastSunset30, 15)
+	wc.URL = "http://example.com/cam.jpg"
+	srv.webcams.Append(wc)
+	srv.router.GET("/edit/:name", srv.handleGetEdit())
+
+	req := httptest.NewRequest(http.MethodGet, "/edit/test-cam", nil)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "test-cam") {
+		t.Error("response should contain webcam name")
+	}
+	if !strings.Contains(body, "Save Changes") {
+		t.Error("response should contain Save Changes button")
+	}
+}
+
+func TestHandleGetEdit_notFound(t *testing.T) {
+	srv := newTestServer(t)
+	if err := srv.initTemplates(); err != nil {
+		t.Fatalf("initTemplates: %v", err)
+	}
+	srv.router.GET("/edit/:name", srv.handleGetEdit())
+
+	req := httptest.NewRequest(http.MethodGet, "/edit/no-such-cam", nil)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("want 404, got %d", w.Code)
+	}
+}
+
+// editForm returns url.Values pre-filled with valid webcam data.
+func editForm(name, folder string) url.Values {
+	v := url.Values{}
+	v.Set("name", name)
+	v.Set("folder", folder)
+	v.Set("webcamUrl", "http://example.com/cam.jpg")
+	v.Set("sourceType", "url")
+	v.Set("latitude", "37.77")
+	v.Set("longitude", "-122.42")
+	v.Set("intervalMinutes", "15")
+	v.Set("firstOption", "firstSunrise30")
+	v.Set("lastOption", "lastSunset30")
+	return v
+}
+
+func TestHandleEdit_success(t *testing.T) {
+	srv := newTestServer(t)
+	if err := srv.initTemplates(); err != nil {
+		t.Fatalf("initTemplates: %v", err)
+	}
+	wc := testWebcam(t, flagFirstSunrise30, flagLastSunset30, 15)
+	srv.webcams.Append(wc)
+	// Write initial config so the edit save has something to overwrite.
+	if err := srv.webcams.Write(srv.config.Path, srv.validate); err != nil {
+		t.Fatalf("initial Write: %v", err)
+	}
+	srv.router.POST("/edit/:name", srv.handleEdit())
+
+	form := editForm("test-cam", "test-cam")
+	form.Set("intervalMinutes", "30")
+	req := httptest.NewRequest(http.MethodPost, "/edit/test-cam",
+		strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("want 303, got %d: %s", w.Code, w.Body.String())
+	}
+	// Verify the webcam was updated in memory.
+	_, updated := srv.webcams.FindByName("test-cam")
+	if updated == nil {
+		t.Fatal("webcam not found after edit")
+	}
+	if updated.IntervalMinutes != 30 {
+		t.Errorf("IntervalMinutes: want 30, got %d", updated.IntervalMinutes)
+	}
+}
+
+func TestHandleEdit_nameChange_transfersStatus(t *testing.T) {
+	srv := newTestServer(t)
+	if err := srv.initTemplates(); err != nil {
+		t.Fatalf("initTemplates: %v", err)
+	}
+	wc := testWebcam(t, flagFirstSunrise30, flagLastSunset30, 15)
+	srv.webcams.Append(wc)
+	srv.status.Set("test-cam", StatusActive, "", "")
+	if err := srv.webcams.Write(srv.config.Path, srv.validate); err != nil {
+		t.Fatalf("initial Write: %v", err)
+	}
+	srv.router.POST("/edit/:name", srv.handleEdit())
+
+	form := editForm("renamed-cam", "test-cam")
+	req := httptest.NewRequest(http.MethodPost, "/edit/test-cam",
+		strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("want 303, got %d: %s", w.Code, w.Body.String())
+	}
+	if _, ok := srv.status.Get("renamed-cam"); !ok {
+		t.Error("status should be transferred to new name")
+	}
+	if _, ok := srv.status.Get("test-cam"); ok {
+		t.Error("status under old name should be removed")
+	}
+}
+
+func TestHandleEdit_folderChange_move(t *testing.T) {
+	srv := newTestServer(t)
+	if err := srv.initTemplates(); err != nil {
+		t.Fatalf("initTemplates: %v", err)
+	}
+	wc := testWebcam(t, flagFirstSunrise30, flagLastSunset30, 15)
+	srv.webcams.Append(wc)
+	if err := srv.webcams.Write(srv.config.Path, srv.validate); err != nil {
+		t.Fatalf("initial Write: %v", err)
+	}
+
+	// Create a .jpg file in the old folder.
+	oldDir := filepath.Join(srv.config.BaseDir, "test-cam")
+	if err := os.MkdirAll(oldDir, 0755); err != nil {
+		t.Fatalf("mkdir old: %v", err)
+	}
+	imgPath := filepath.Join(oldDir, "frame.jpg")
+	if err := os.WriteFile(imgPath, []byte("fake"), 0644); err != nil {
+		t.Fatalf("write img: %v", err)
+	}
+
+	srv.router.POST("/edit/:name", srv.handleEdit())
+
+	form := editForm("test-cam", "new-folder")
+	form.Set("moveImages", "1")
+	req := httptest.NewRequest(http.MethodPost, "/edit/test-cam",
+		strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("want 303, got %d: %s", w.Code, w.Body.String())
+	}
+	// Verify the file was moved.
+	newPath := filepath.Join(srv.config.BaseDir, "new-folder", "frame.jpg")
+	if _, err := os.Stat(newPath); err != nil {
+		t.Errorf("image should have been moved to new folder: %v", err)
+	}
+	if _, err := os.Stat(imgPath); err == nil {
+		t.Error("image should no longer exist in old folder")
+	}
+}
+
+func TestHandleEdit_folderChange_noMove(t *testing.T) {
+	srv := newTestServer(t)
+	if err := srv.initTemplates(); err != nil {
+		t.Fatalf("initTemplates: %v", err)
+	}
+	wc := testWebcam(t, flagFirstSunrise30, flagLastSunset30, 15)
+	srv.webcams.Append(wc)
+	if err := srv.webcams.Write(srv.config.Path, srv.validate); err != nil {
+		t.Fatalf("initial Write: %v", err)
+	}
+
+	oldDir := filepath.Join(srv.config.BaseDir, "test-cam")
+	if err := os.MkdirAll(oldDir, 0755); err != nil {
+		t.Fatalf("mkdir old: %v", err)
+	}
+	imgPath := filepath.Join(oldDir, "frame.jpg")
+	if err := os.WriteFile(imgPath, []byte("fake"), 0644); err != nil {
+		t.Fatalf("write img: %v", err)
+	}
+
+	srv.router.POST("/edit/:name", srv.handleEdit())
+
+	form := editForm("test-cam", "new-folder")
+	// moveImages not set — skip move
+	req := httptest.NewRequest(http.MethodPost, "/edit/test-cam",
+		strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("want 303, got %d: %s", w.Code, w.Body.String())
+	}
+	// Original file should still be in old folder.
+	if _, err := os.Stat(imgPath); err != nil {
+		t.Errorf("image should remain in old folder when move not requested: %v", err)
+	}
+}
+
+func TestHandleEdit_notFound(t *testing.T) {
+	srv := newTestServer(t)
+	if err := srv.initTemplates(); err != nil {
+		t.Fatalf("initTemplates: %v", err)
+	}
+	srv.router.POST("/edit/:name", srv.handleEdit())
+
+	form := editForm("test-cam", "test-cam")
+	req := httptest.NewRequest(http.MethodPost, "/edit/no-such-cam",
+		strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("want 404, got %d", w.Code)
+	}
+}
+
+func TestHandleEdit_invalidFolder(t *testing.T) {
+	srv := newTestServer(t)
+	if err := srv.initTemplates(); err != nil {
+		t.Fatalf("initTemplates: %v", err)
+	}
+	wc := testWebcam(t, flagFirstSunrise30, flagLastSunset30, 15)
+	srv.webcams.Append(wc)
+	srv.router.POST("/edit/:name", srv.handleEdit())
+
+	form := editForm("test-cam", "../escape")
+	req := httptest.NewRequest(http.MethodPost, "/edit/test-cam",
+		strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("path traversal: want 400, got %d", w.Code)
+	}
+}
+
+// postEditForm posts a url.Values form to POST /edit/:name and returns the recorder.
+func postEditForm(t *testing.T, srv *server, name string, form url.Values) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/edit/"+name,
+		strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+	return w
+}
+
+// TestHandleEdit_writeFails_returns500 verifies that a disk write failure
+// during edit returns HTTP 500.
+func TestHandleEdit_writeFails_returns500(t *testing.T) {
+	srv := newTestServer(t)
+	if err := srv.initTemplates(); err != nil {
+		t.Fatalf("initTemplates: %v", err)
+	}
+	wc := testWebcam(t, flagFirstSunrise30, flagLastSunset30, 15)
+	srv.webcams.Append(wc)
+	srv.config.Path = filepath.Join(srv.config.Path, "nonexistent")
+	srv.router.POST("/edit/:name", srv.handleEdit())
+
+	form := editForm("test-cam", "test-cam")
+	form.Set("intervalMinutes", "30")
+	w := postEditForm(t, srv, "test-cam", form)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("write fail: want 500, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleEdit_writeFails_restoresOriginal verifies that on a disk write
+// failure the original webcam is restored in memory (not the edited version).
+// The WaitGroup contract is also implicitly checked: newTestServer registers
+// cleanup as webcamWg.Wait(), which would hang if restartAllGoroutines left
+// an unmatched Add.
+func TestHandleEdit_writeFails_restoresOriginal(t *testing.T) {
+	srv := newTestServer(t)
+	if err := srv.initTemplates(); err != nil {
+		t.Fatalf("initTemplates: %v", err)
+	}
+	wc := testWebcam(t, flagFirstSunrise30, flagLastSunset30, 15)
+	srv.webcams.Append(wc)
+	srv.config.Path = filepath.Join(srv.config.Path, "nonexistent")
+	srv.router.POST("/edit/:name", srv.handleEdit())
+
+	form := editForm("test-cam", "test-cam")
+	form.Set("intervalMinutes", "30")
+	postEditForm(t, srv, "test-cam", form)
+
+	srv.mu.RLock()
+	_, current := srv.webcams.FindByName("test-cam")
+	srv.mu.RUnlock()
+
+	if current == nil {
+		t.Fatal("webcam not found after write-failure rollback")
+	}
+	if current.IntervalMinutes != 15 {
+		t.Errorf("want original IntervalMinutes=15 after rollback, got %d", current.IntervalMinutes)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// NotificationCenter.RenameWebcam
+// ---------------------------------------------------------------------------
+
+func TestNotificationCenter_RenameWebcam(t *testing.T) {
+	nc := newNotificationCenter(t.TempDir())
+	nc.Add(Notification{ID: "odd-dim-old-cam", Title: "Odd dimensions", Buttons: ButtonDismissOnly})
+	nc.Add(Notification{ID: "unrelated-entry", Title: "Other", Buttons: ButtonDismissOnly})
+
+	nc.RenameWebcam("old-cam", "new-cam")
+
+	if !nc.HasUndismissed("odd-dim-new-cam") {
+		t.Error("renamed notification should be findable under new ID")
+	}
+	if nc.HasUndismissed("odd-dim-old-cam") {
+		t.Error("old notification ID should no longer exist after rename")
+	}
+	if !nc.HasUndismissed("unrelated-entry") {
+		t.Error("unrelated notification should be unaffected by rename")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// moveJPEGs
+// ---------------------------------------------------------------------------
+
+func TestMoveJPEGs_mkdirFails(t *testing.T) {
+	tmp := t.TempDir()
+	// Place a regular file where the destination directory would be.
+	// MkdirAll cannot create a directory over an existing regular file.
+	dst := filepath.Join(tmp, "blocker")
+	if err := os.WriteFile(dst, []byte("x"), 0644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if err := moveJPEGs(tmp, dst); err == nil {
+		t.Error("want error when destination cannot be created, got nil")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// restartAllGoroutines — trial stopped
+// ---------------------------------------------------------------------------
+
+func TestRestartAllGoroutines_trialStopped(t *testing.T) {
+	srv := newTestServer(t)
+	srv.trial = TrialExpired
+	srv.webcams.Append(testWebcam(t, flagFirstSunrise30, flagLastSunset30, 15))
+
+	// Simulate the state after webcamCancel()+Wait() as called in handleEdit.
+	srv.webcamCancel()
+	srv.webcamWg.Wait()
+
+	srv.restartAllGoroutines()
+
+	// No goroutines should start when trial is stopped; Wait returns immediately.
+	done := make(chan struct{})
+	go func() { srv.webcamWg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(200 * time.Millisecond):
+		t.Error("goroutines were started despite trial being stopped")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // POST /reload
 // ---------------------------------------------------------------------------
 

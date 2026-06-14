@@ -104,6 +104,25 @@ func (nc *NotificationCenter) HasUndismissed(id string) bool {
 	return false
 }
 
+// RenameWebcam migrates stable notification IDs that embed a webcam name.
+// Currently handles "odd-dim-<oldName>" → "odd-dim-<newName>".
+func (nc *NotificationCenter) RenameWebcam(oldName, newName string) {
+	nc.mu.Lock()
+	oldID := "odd-dim-" + oldName
+	newID := "odd-dim-" + newName
+	changed := false
+	for i := range nc.entries {
+		if nc.entries[i].ID == oldID {
+			nc.entries[i].ID = newID
+			changed = true
+		}
+	}
+	if changed {
+		nc.save()
+	}
+	nc.mu.Unlock()
+}
+
 // All returns a snapshot of all entries, newest first.
 func (nc *NotificationCenter) All() []Notification {
 	nc.mu.RLock()

@@ -17,6 +17,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -41,8 +42,40 @@ type webcamCardData struct {
 	NextCapture         string // formatted time, "Done for today", or "" when Initializing
 	CaptureCountToday   int
 	ScheduledCountToday int
-	Initializing        bool // true when DayFirst not yet set (schedule pending)
-	CanRender           bool // true if capture folder contains 2+ .jpg files on disk
+	Initializing        bool   // true when DayFirst not yet set (schedule pending)
+	CanRender           bool   // true if capture folder contains 2+ .jpg files on disk
+	EditPath            string // URL-safe path for the edit link, e.g. "/edit/front-yard"
+}
+
+// editWebcamData is the template context for the edit-webcam form.
+type editWebcamData struct {
+	Page                string
+	Title               string
+	Trial               TrialState
+	UnreadNotifications int
+	// Current (original) values — used to detect changes in JS and as form action target.
+	OriginalName   string
+	OriginalFolder string
+	ImageCount     int // count of .jpg files in OriginalFolder, for move checkbox label
+	// Webcam field values — pre-populate the form inputs.
+	Name            string
+	URL             string
+	DeviceName      string
+	SourceType      string
+	Latitude        float64
+	Longitude       float64
+	Folder          string
+	IntervalMinutes int
+	FirstSunrise    bool
+	FirstSunrise30  bool
+	FirstSunrise60  bool
+	FirstTime       bool
+	FirstTimeValue  string
+	LastSunset      bool
+	LastSunset30    bool
+	LastSunset60    bool
+	LastTime        bool
+	LastTimeValue   string
 }
 
 // dashboardData is the template context for the dashboard page.
@@ -175,6 +208,7 @@ func webcamCard(wc *Webcam, baseDir string, sc *StatusCenter) webcamCardData {
 	// For LocalStorage, handleNew guarantees this directory exists before the webcam is persisted.
 	matches, _ := filepath.Glob(filepath.Join(baseDir, d.Folder, "*.jpg"))
 	d.CanRender = len(matches) > 1
+	d.EditPath = "/edit/" + url.PathEscape(wc.Name)
 
 	return d
 }
@@ -392,6 +426,285 @@ func (s *server) handleNew() httprouter.Handle {
 		go capture(wcCtx, wc, time.Duration(s.config.PollSecs)*time.Second, s)
 
 		http.Redirect(w, r, "/", http.StatusSeeOther)
+	}
+}
+
+// handleGetEdit renders the edit-webcam form pre-populated with current values.
+func (s *server) handleGetEdit() httprouter.Handle {
+	return func(w http.ResponseWriter, r *http.Request, p httprouter.Params) {
+		name := p.ByName("name")
+
+		s.mu.RLock()
+		_, wc := s.webcams.FindByName(name)
+		trial := s.trial
+		s.mu.RUnlock()
+
+		if wc == nil {
+			http.Error(w, "webcam not found", http.StatusNotFound)
+			return
+		}
+
+		wc.mu.RLock()
+		matches, _ := filepath.Glob(filepath.Join(s.config.BaseDir, wc.Folder, "*.jpg"))
+		data := editWebcamData{
+			Page:                "edit-webcam",
+			Title:               "Edit Webcam",
+			Trial:               trial,
+			UnreadNotifications: s.notifications.UnreadCount(),
+			OriginalName:        wc.Name,
+			OriginalFolder:      wc.Folder,
+			ImageCount:          len(matches),
+			Name:                wc.Name,
+			URL:                 wc.URL,
+			DeviceName:          wc.DeviceName,
+			SourceType:          wc.SourceType,
+			Latitude:            wc.Latitude,
+			Longitude:           wc.Longitude,
+			Folder:              wc.Folder,
+			IntervalMinutes:     wc.IntervalMinutes,
+			FirstSunrise:        wc.FirstSunrise,
+			FirstSunrise30:      wc.FirstSunrise30,
+			FirstSunrise60:      wc.FirstSunrise60,
+			FirstTime:           wc.FirstTime,
+			FirstTimeValue:      wc.FirstTimeValue,
+			LastSunset:          wc.LastSunset,
+			LastSunset30:        wc.LastSunset30,
+			LastSunset60:        wc.LastSunset60,
+			LastTime:            wc.LastTime,
+			LastTimeValue:       wc.LastTimeValue,
+		}
+		wc.mu.RUnlock()
+
+		if err := s.tmplEditWebcam.ExecuteTemplate(w, "base", data); err != nil {
+			slog.Debug("template execution error", "handler", "handleGetEdit", "failure_class", fcInternalError, "error", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}
+}
+
+// handleEdit processes the edit-webcam form submission.
+// It cancels all capture goroutines, applies the update, persists to disk,
+// optionally moves images when the folder changes, then restarts all goroutines.
+func (s *server) handleEdit() httprouter.Handle {
+	return func(w http.ResponseWriter, r *http.Request, p httprouter.Params) {
+		originalName := p.ByName("name")
+
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "form parse error: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		// Build and validate the updated webcam.
+		updated := newWebcam()
+		updated.Name = strings.TrimSpace(r.FormValue("name"))
+		updated.URL = strings.TrimSpace(r.FormValue("webcamUrl"))
+		updated.Folder = strings.TrimSpace(r.FormValue("folder"))
+		updated.SourceType = strings.TrimSpace(r.FormValue("sourceType"))
+		updated.DeviceName = strings.TrimSpace(r.FormValue("deviceName"))
+		updated.FirstTimeValue = r.FormValue("firstTimeValue")
+		updated.LastTimeValue = r.FormValue("lastTimeValue")
+
+		var err error
+		if updated.Latitude, err = strconv.ParseFloat(r.FormValue("latitude"), 64); err != nil {
+			http.Error(w, "invalid latitude", http.StatusBadRequest)
+			return
+		}
+		if updated.Longitude, err = strconv.ParseFloat(r.FormValue("longitude"), 64); err != nil {
+			http.Error(w, "invalid longitude", http.StatusBadRequest)
+			return
+		}
+		if updated.IntervalMinutes, err = strconv.Atoi(r.FormValue("intervalMinutes")); err != nil {
+			http.Error(w, "invalid interval", http.StatusBadRequest)
+			return
+		}
+
+		switch r.FormValue("firstOption") {
+		case "firstSunrise":
+			updated.FirstSunrise = true
+		case "firstSunrise30":
+			updated.FirstSunrise30 = true
+		case "firstSunrise60":
+			updated.FirstSunrise60 = true
+		case "firstTime":
+			updated.FirstTime = true
+		default:
+			updated.FirstSunrise = r.FormValue("firstSunrise") != ""
+			updated.FirstSunrise30 = r.FormValue("firstSunrise30") != ""
+			updated.FirstSunrise60 = r.FormValue("firstSunrise60") != ""
+			updated.FirstTime = r.FormValue("firstTime") != ""
+		}
+		switch r.FormValue("lastOption") {
+		case "lastSunset":
+			updated.LastSunset = true
+		case "lastSunset30":
+			updated.LastSunset30 = true
+		case "lastSunset60":
+			updated.LastSunset60 = true
+		case "lastTime":
+			updated.LastTime = true
+		default:
+			updated.LastSunset = r.FormValue("lastSunset") != ""
+			updated.LastSunset30 = r.FormValue("lastSunset30") != ""
+			updated.LastSunset60 = r.FormValue("lastSunset60") != ""
+			updated.LastTime = r.FormValue("lastTime") != ""
+		}
+
+		if err := s.validate.Struct(updated); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := updated.SetFirstLastFlags(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		// Reject folder values that escape BaseDir (path traversal).
+		base := filepath.Clean(s.config.BaseDir)
+		resolvedFolder := filepath.Clean(filepath.Join(base, updated.Folder))
+		if !strings.HasPrefix(resolvedFolder, base+string(filepath.Separator)) {
+			http.Error(w, "invalid folder path", http.StatusBadRequest)
+			return
+		}
+
+		// Re-probe dimensions if probe values were submitted; preserve existing OddDimensions
+		// if no new probe was provided (user didn't take a test shot during edit).
+		probeWidth, _ := strconv.Atoi(r.FormValue("probeWidth"))
+		probeHeight, _ := strconv.Atoi(r.FormValue("probeHeight"))
+		if probeWidth > 0 && probeHeight > 0 {
+			updated.ProbeWidth = probeWidth
+			updated.ProbeHeight = probeHeight
+			updated.OddDimensions = probeWidth%2 != 0 || probeHeight%2 != 0
+		}
+
+		// Find the original webcam and build the new list for writing (before modifying in-memory).
+		s.mu.RLock()
+		idx, oldWc := s.webcams.FindByName(originalName)
+		s.mu.RUnlock()
+
+		if oldWc == nil {
+			http.Error(w, "webcam not found", http.StatusNotFound)
+			return
+		}
+
+		// Preserve probe dimensions from original if no new probe was submitted.
+		if probeWidth == 0 || probeHeight == 0 {
+			oldWc.mu.RLock()
+			updated.OddDimensions = oldWc.OddDimensions
+			updated.ProbeWidth = oldWc.ProbeWidth
+			updated.ProbeHeight = oldWc.ProbeHeight
+			updated.RecoveryPending = oldWc.RecoveryPending
+			updated.Disabled = oldWc.Disabled
+			updated.WebcamTZ = oldWc.WebcamTZ
+			oldWc.mu.RUnlock()
+		} else {
+			oldWc.mu.RLock()
+			updated.RecoveryPending = oldWc.RecoveryPending
+			updated.Disabled = oldWc.Disabled
+			updated.WebcamTZ = oldWc.WebcamTZ
+			oldWc.mu.RUnlock()
+		}
+
+		folderChanged := updated.Folder != oldWc.Folder
+		moveImages := r.FormValue("moveImages") == "1" && folderChanged
+
+		// Pre-create new folder for LocalStorage (before stopping goroutines, so any
+		// filesystem errors surface before we disrupt capture).
+		if _, ok := s.storage.(*LocalStorage); ok {
+			newDir := filepath.Join(s.config.BaseDir, updated.Folder)
+			if err := os.MkdirAll(newDir, 0755); err != nil {
+				slog.Info("capture directory could not be created", "webcam", updated.Name, "path", newDir)
+				slog.Debug("handleEdit: MkdirAll failed", "webcam", updated.Name, "path", newDir, "failure_class", fcFilesystem, "error", err)
+				http.Error(w, "could not create folder: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+
+		// Stop all capture goroutines before modifying shared state.
+		s.webcamCancel()
+		s.webcamWg.Wait()
+
+		// Move images synchronously if requested. On failure: restart goroutines with
+		// original config and return an error.
+		if moveImages {
+			oldDir := filepath.Join(s.config.BaseDir, oldWc.Folder)
+			newDir := filepath.Join(s.config.BaseDir, updated.Folder)
+			if err := moveJPEGs(oldDir, newDir); err != nil {
+				slog.Info("image folder move failed during webcam edit",
+					"webcam", updated.Name, "from", oldWc.Folder, "to", updated.Folder)
+				slog.Debug("handleEdit: moveJPEGs failed",
+					"from", oldDir, "to", newDir, "failure_class", fcFilesystem, "error", err)
+				// Restart with original config, then surface the error.
+				s.restartAllGoroutines()
+				http.Error(w, "could not move images: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+
+		// Update in-memory list and write to disk.
+		s.mu.Lock()
+		s.webcams.Replace(idx, updated)
+		s.webcamCtx, s.webcamCancel = context.WithCancel(s.ctx)
+		s.mu.Unlock()
+
+		if err := s.webcams.Write(s.config.Path, s.validate); err != nil {
+			// Restore original webcam and restart.
+			slog.Info("webcam configuration could not be saved", "webcam", updated.Name)
+			slog.Debug("handleEdit: Write failed", "webcam", updated.Name, "failure_class", fcFilesystem, "error", err)
+			s.mu.Lock()
+			s.webcams.Replace(idx, oldWc)
+			s.mu.Unlock()
+			s.restartAllGoroutines()
+			http.Error(w, "could not save configuration: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Transfer name-keyed status and notification entries if the webcam was renamed.
+		if updated.Name != originalName {
+			s.status.Rename(originalName, updated.Name)
+			s.notifications.RenameWebcam(originalName, updated.Name)
+		}
+
+		s.restartAllGoroutines()
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+	}
+}
+
+// moveJPEGs moves all .jpg files from src to dst directory, creating dst if needed.
+func moveJPEGs(src, dst string) error {
+	if err := os.MkdirAll(dst, 0755); err != nil {
+		return fmt.Errorf("create destination: %w", err)
+	}
+	matches, err := filepath.Glob(filepath.Join(src, "*.jpg"))
+	if err != nil {
+		return err
+	}
+	for _, srcPath := range matches {
+		dstPath := filepath.Join(dst, filepath.Base(srcPath))
+		if err := os.Rename(srcPath, dstPath); err != nil {
+			return fmt.Errorf("move %s: %w", filepath.Base(srcPath), err)
+		}
+	}
+	return nil
+}
+
+// restartAllGoroutines creates a fresh webcamCtx and launches a capture goroutine
+// for every webcam in s.webcams. It must be called after webcamCancel()+webcamWg.Wait().
+func (s *server) restartAllGoroutines() {
+	s.mu.Lock()
+	s.webcamCtx, s.webcamCancel = context.WithCancel(s.ctx)
+	ctx := s.webcamCtx
+	webcams := *s.webcams
+	s.mu.Unlock()
+
+	if s.trial.capturesStopped() {
+		return
+	}
+	for i, wc := range webcams {
+		if i > 0 {
+			time.Sleep(2 * time.Second)
+		}
+		s.webcamWg.Add(1)
+		go capture(ctx, wc, time.Duration(s.config.PollSecs)*time.Second, s)
 	}
 }
 
@@ -967,6 +1280,9 @@ func (s *server) initTemplates() error {
 		return err
 	}
 	if s.tmplNewWebcam, err = parse("new_webcam"); err != nil {
+		return err
+	}
+	if s.tmplEditWebcam, err = parse("edit_webcam"); err != nil {
 		return err
 	}
 	if s.tmplLatlong, err = parse("latlong"); err != nil {

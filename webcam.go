@@ -147,6 +147,16 @@ func (wc *Webcam) SetFirstLastFlags() error {
 
 const masterFile = "logscene.json"
 
+// currentSchemaVersion is the logscene.json schema version written by this build.
+// Increment when making breaking changes to the persisted data model.
+const currentSchemaVersion = 1
+
+// logsceneFile is the on-disk JSON envelope for logscene.json.
+type logsceneFile struct {
+	SchemaVersion int     `json:"schemaVersion"`
+	Webcams       Webcams `json:"webcams"`
+}
+
 // Webcams is the ordered list of all configured webcams, persisted to logscene.json.
 type Webcams []*Webcam
 
@@ -156,6 +166,8 @@ func newWebcams() *Webcams {
 }
 
 // Read loads and validates logscene.json into ws.
+// It accepts both the current wrapper format {"schemaVersion":N,"webcams":[...]} and
+// the legacy bare-array format [...]; the latter logs a warning and continues.
 func (ws *Webcams) Read(path string, validate *validator.Validate) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -165,8 +177,19 @@ func (ws *Webcams) Read(path string, validate *validator.Validate) error {
 		return fmt.Errorf("Webcams.Read: file is empty")
 	}
 
-	if err := json.Unmarshal(data, ws); err != nil {
-		return fmt.Errorf("Webcams.Read: unmarshal: %w", err)
+	var lf logsceneFile
+	if err := json.Unmarshal(data, &lf); err != nil {
+		// Legacy format: bare JSON array. Try direct unmarshal.
+		if err2 := json.Unmarshal(data, ws); err2 != nil {
+			return fmt.Errorf("Webcams.Read: unmarshal: %w", err2)
+		}
+		slog.Info("logscene.json uses a legacy format — resave by editing any webcam to upgrade")
+	} else {
+		*ws = lf.Webcams
+		if lf.SchemaVersion < currentSchemaVersion {
+			slog.Info("logscene.json schema version is outdated",
+				"found", lf.SchemaVersion, "current", currentSchemaVersion)
+		}
 	}
 
 	for i, wc := range *ws {
@@ -180,7 +203,7 @@ func (ws *Webcams) Read(path string, validate *validator.Validate) error {
 	return nil
 }
 
-// Write validates and writes ws to logscene.json.
+// Write validates and writes ws to logscene.json using the current wrapper format.
 func (ws Webcams) Write(dir string, validate *validator.Validate) error {
 	for i, wc := range ws {
 		if err := validate.Struct(wc); err != nil {
@@ -188,7 +211,12 @@ func (ws Webcams) Write(dir string, validate *validator.Validate) error {
 		}
 	}
 
-	buf, err := json.MarshalIndent(ws, "", "  ")
+	webcams := ws
+	if webcams == nil {
+		webcams = Webcams{}
+	}
+	lf := logsceneFile{SchemaVersion: currentSchemaVersion, Webcams: webcams}
+	buf, err := json.MarshalIndent(lf, "", "  ")
 	if err != nil {
 		return fmt.Errorf("Webcams.Write: marshal: %w", err)
 	}
@@ -215,6 +243,22 @@ func (ws *Webcams) Delete(prefix string) *Webcams {
 		}
 	}
 	return &keep
+}
+
+// FindByName returns the index and pointer of the first Webcam with the given name,
+// or -1 and nil if not found.
+func (ws *Webcams) FindByName(name string) (int, *Webcam) {
+	for i, wc := range *ws {
+		if wc.Name == name {
+			return i, wc
+		}
+	}
+	return -1, nil
+}
+
+// Replace swaps the Webcam at index idx with wc.
+func (ws *Webcams) Replace(idx int, wc *Webcam) {
+	(*ws)[idx] = wc
 }
 
 // ---------------------------------------------------------------------------

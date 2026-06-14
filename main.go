@@ -34,6 +34,7 @@ type server struct {
 	config        *Config
 	tmplDashboard     *template.Template
 	tmplNewWebcam     *template.Template
+	tmplEditWebcam    *template.Template
 	tmplLatlong       *template.Template
 	tmplLogs          *template.Template
 	tmplWriteFailure  *template.Template
@@ -163,6 +164,8 @@ func main() {
 		http.StripPrefix("/static/", http.FileServer(http.FS(staticSub))))
 	srv.router.GET("/", srv.handleHome())
 	srv.router.GET("/new", srv.handleGetNew())
+	srv.router.GET("/edit/:name", srv.handleGetEdit())
+	srv.router.POST("/edit/:name", srv.handleEdit())
 	srv.router.GET("/latlong", srv.handleGetLatlong())
 	srv.router.POST("/probe", srv.handleProbe())
 	srv.router.GET("/devices", srv.handleDevices())

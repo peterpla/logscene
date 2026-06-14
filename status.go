@@ -91,3 +91,13 @@ func (sc *StatusCenter) Get(webcamName string) (WebcamStatus, bool) {
 	sc.mu.RUnlock()
 	return e.status, ok
 }
+
+// Rename transfers the status entry from oldName to newName. No-op if oldName has no entry.
+func (sc *StatusCenter) Rename(oldName, newName string) {
+	sc.mu.Lock()
+	if e, ok := sc.entries[oldName]; ok {
+		sc.entries[newName] = e
+		delete(sc.entries, oldName)
+	}
+	sc.mu.Unlock()
+}

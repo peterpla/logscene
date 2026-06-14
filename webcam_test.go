@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -288,6 +289,73 @@ func TestWebcams_Read_setFirstLastFlagsError(t *testing.T) {
 	ws := newWebcams()
 	if err := ws.Read(path, newValidator()); err == nil {
 		t.Error("expected error for webcam with conflicting first-capture flags, got nil")
+	}
+}
+
+func TestWebcams_WriteAndRead_schemaVersion(t *testing.T) {
+	dir := t.TempDir()
+	ws := newWebcams()
+	ws.Append(validWebcam())
+	if err := ws.Write(dir, newValidator()); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	// Verify the file contains the schemaVersion field.
+	data, err := os.ReadFile(filepath.Join(dir, masterFile))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if !strings.Contains(string(data), `"schemaVersion"`) {
+		t.Errorf("logscene.json should contain schemaVersion field; got: %s", data)
+	}
+
+	// Verify Read accepts the new format.
+	ws2 := newWebcams()
+	if err := ws2.Read(filepath.Join(dir, masterFile), newValidator()); err != nil {
+		t.Fatalf("Read new format: %v", err)
+	}
+	if len(*ws2) != 1 {
+		t.Errorf("want 1 webcam, got %d", len(*ws2))
+	}
+}
+
+func TestWebcams_Read_outdatedSchemaVersion(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, masterFile)
+
+	// Write a file whose schemaVersion is below the current version.
+	// Read should succeed (continue with warning) rather than error.
+	lf := logsceneFile{SchemaVersion: 0, Webcams: Webcams{validWebcam()}}
+	data, _ := json.Marshal(lf)
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	ws := newWebcams()
+	if err := ws.Read(path, newValidator()); err != nil {
+		t.Fatalf("outdated schemaVersion should not cause an error: %v", err)
+	}
+	if len(*ws) != 1 {
+		t.Errorf("want 1 webcam from outdated-schema file, got %d", len(*ws))
+	}
+}
+
+func TestWebcams_Read_legacyBareArray(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, masterFile)
+
+	// Write a bare JSON array (legacy format without schemaVersion wrapper).
+	data, _ := json.Marshal(Webcams{validWebcam()})
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	ws := newWebcams()
+	if err := ws.Read(path, newValidator()); err != nil {
+		t.Fatalf("Read legacy format: %v", err)
+	}
+	if len(*ws) != 1 {
+		t.Errorf("want 1 webcam from legacy format, got %d", len(*ws))
 	}
 }
 

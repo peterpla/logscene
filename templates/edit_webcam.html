@@ -1,0 +1,470 @@
+{{define "content"}}
+<h5 class="mb-4">Edit Webcam</h5>
+
+<form method="POST" action="/edit/{{.OriginalName}}">
+
+  <!-- ── Camera Source ─────────────────────────────────────────── -->
+  <div class="card mb-3">
+    <div class="card-header fw-semibold">Camera Source</div>
+    <div class="card-body">
+      <p class="text-muted small mb-3">
+        Is your camera plugged in, or does it connect over your network?
+      </p>
+      <div class="d-flex flex-wrap gap-4 mb-3">
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="sourceType"
+                 id="stRemote" value="url" {{if or (eq .SourceType "url") (eq .SourceType "")}}checked{{end}}>
+          <label class="form-check-label" for="stRemote">
+            Remote Camera
+            <span class="text-secondary ms-1" data-bs-toggle="tooltip"
+                  data-bs-title="A camera you don't control that publishes images online — like the Old Faithful webcam at Yellowstone">(?)</span>
+          </label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="sourceType"
+                 id="stUSB" value="usb" {{if eq .SourceType "usb"}}checked{{end}}>
+          <label class="form-check-label" for="stUSB">USB Webcam</label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="sourceType"
+                 id="stIP" value="stream" {{if eq .SourceType "stream"}}checked{{end}}>
+          <label class="form-check-label" for="stIP">IP Camera</label>
+        </div>
+      </div>
+
+      <!-- Per-source hint text -->
+      <p id="hintRemote" class="text-muted small mb-3" style="display:none">
+        Enter the direct URL to the camera's snapshot image.
+      </p>
+      <p id="hintUSB" class="text-muted small mb-3" style="display:none">
+        Select the USB camera plugged into this computer.
+      </p>
+      <p id="hintIP" class="text-muted small mb-3" style="display:none">
+        Enter the RTSP or MJPEG stream URL from your IP camera's settings (e.g., Reolink, Foscam, Hikvision).
+      </p>
+
+      <!-- URL field — Remote Camera / IP Camera -->
+      <div id="urlSection">
+        <label for="webcamUrl" class="form-label" id="urlLabel">Camera URL</label>
+        <input type="url" class="form-control" id="webcamUrl" name="webcamUrl"
+               value="{{.URL}}" placeholder="http://…">
+      </div>
+
+      <!-- Device dropdown — USB Webcam -->
+      <div id="usbSection" style="display:none">
+        <div class="d-flex align-items-center gap-2 mb-1">
+          <label for="deviceName" class="form-label mb-0">USB Device</label>
+          <button type="button" class="btn btn-sm btn-outline-secondary" onclick="loadDevices()">
+            Scan again
+          </button>
+        </div>
+        <select class="form-select" id="deviceName" name="deviceName">
+          <option value="">Loading…</option>
+        </select>
+        <div class="form-text">
+          If your camera isn't listed, make sure it's plugged in and click <em>Scan again</em>.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Camera Details ─────────────────────────────────────────── -->
+  <div class="card mb-3">
+    <div class="card-header fw-semibold">Camera Details</div>
+    <div class="card-body">
+      <div class="mb-3">
+        <label for="name" class="form-label">
+          Friendly Name <span class="text-danger">*</span>
+          <span class="text-secondary ms-1" data-bs-toggle="tooltip"
+                data-bs-title="Whatever you want to call this camera">(?)</span>
+        </label>
+        <input type="text" class="form-control" id="name" name="name"
+               value="{{.Name}}" required>
+        <div id="nameChangeWarning" class="form-text text-warning" style="display:none">
+          Renaming this webcam will restart its capture process.
+        </div>
+      </div>
+      <div class="row g-3 mb-3">
+        <div class="col-sm-6">
+          <label for="latitude" class="form-label">Latitude <span class="text-danger">*</span></label>
+          <input type="number" class="form-control" id="latitude" name="latitude"
+                 step="0.0001" min="-90" max="90" required value="{{.Latitude}}">
+        </div>
+        <div class="col-sm-6">
+          <label for="longitude" class="form-label">Longitude <span class="text-danger">*</span></label>
+          <input type="number" class="form-control" id="longitude" name="longitude"
+                 step="0.0001" min="-180" max="180" required value="{{.Longitude}}">
+        </div>
+      </div>
+      <div class="mb-3">
+        <a href="/latlong" class="btn btn-sm btn-outline-secondary">Find Coordinates</a>
+        <span class="text-muted small ms-2">Opens a helper page</span>
+      </div>
+      <div class="mb-0">
+        <label for="folder" class="form-label">
+          Storage Folder <span class="text-danger">*</span>
+          <span class="text-secondary ms-1" data-bs-toggle="tooltip"
+                data-bs-title="Where to store images from this camera">(?)</span>
+        </label>
+        <input type="text" class="form-control" id="folder" name="folder"
+               value="{{.Folder}}" required>
+        <div id="folderChangeWarning" class="mt-2" style="display:none">
+          <div class="form-text text-warning mb-1">
+            Images in <strong id="oldFolderName">{{.OriginalFolder}}</strong> won't be included in future videos unless moved to the new folder.
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="moveImages" name="moveImages" value="1" checked>
+            <label class="form-check-label small" for="moveImages" id="moveImagesLabel">
+              Move {{.ImageCount}} image{{if ne .ImageCount 1}}s{{end}} from <strong>{{.OriginalFolder}}</strong> to the new folder
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── First Capture ──────────────────────────────────────────── -->
+  <div class="card mb-3">
+    <div class="card-header fw-semibold">First Capture of the Day</div>
+    <div class="card-body">
+      <div class="d-flex flex-wrap gap-3">
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="firstOption"
+                 id="firstSunrise" value="firstSunrise" {{if .FirstSunrise}}checked{{end}}>
+          <label class="form-check-label" for="firstSunrise">At sunrise</label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="firstOption"
+                 id="firstSunrise30" value="firstSunrise30" {{if .FirstSunrise30}}checked{{end}}>
+          <label class="form-check-label" for="firstSunrise30">30 min after sunrise</label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="firstOption"
+                 id="firstSunrise60" value="firstSunrise60" {{if .FirstSunrise60}}checked{{end}}>
+          <label class="form-check-label" for="firstSunrise60">60 min after sunrise</label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="firstOption"
+                 id="firstTime" value="firstTime" {{if .FirstTime}}checked{{end}}>
+          <label class="form-check-label" for="firstTime">Fixed time</label>
+        </div>
+      </div>
+      <div id="firstTimeSection" class="mt-3" {{if not .FirstTime}}style="display:none"{{end}}>
+        <label for="firstTimeValue" class="form-label">Time (camera's local time)</label>
+        <input type="time" class="form-control w-auto" id="firstTimeValue" name="firstTimeValue"
+               value="{{.FirstTimeValue}}">
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Last Capture ───────────────────────────────────────────── -->
+  <div class="card mb-3">
+    <div class="card-header fw-semibold">Last Capture of the Day</div>
+    <div class="card-body">
+      <div class="d-flex flex-wrap gap-3">
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="lastOption"
+                 id="lastSunset" value="lastSunset" {{if .LastSunset}}checked{{end}}>
+          <label class="form-check-label" for="lastSunset">At sunset</label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="lastOption"
+                 id="lastSunset30" value="lastSunset30" {{if .LastSunset30}}checked{{end}}>
+          <label class="form-check-label" for="lastSunset30">30 min before sunset</label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="lastOption"
+                 id="lastSunset60" value="lastSunset60" {{if .LastSunset60}}checked{{end}}>
+          <label class="form-check-label" for="lastSunset60">60 min before sunset</label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="lastOption"
+                 id="lastTime" value="lastTime" {{if .LastTime}}checked{{end}}>
+          <label class="form-check-label" for="lastTime">Fixed time</label>
+        </div>
+      </div>
+      <div id="lastTimeSection" class="mt-3" {{if not .LastTime}}style="display:none"{{end}}>
+        <label for="lastTimeValue" class="form-label">Time (camera's local time)</label>
+        <input type="time" class="form-control w-auto" id="lastTimeValue" name="lastTimeValue"
+               value="{{.LastTimeValue}}">
+      </div>
+    </div>
+  </div>
+
+  <!-- ── How Often ──────────────────────────────────────────────── -->
+  <div class="card mb-4">
+    <div class="card-header fw-semibold">How Often to Capture</div>
+    <div class="card-body">
+      <input type="hidden" name="intervalMinutes" id="intervalMinutes" value="{{.IntervalMinutes}}">
+
+      <div class="btn-group mb-3" role="group" aria-label="Capture interval">
+        <input type="radio" class="btn-check" name="intervalPreset" id="int5"  value="5">
+        <label class="btn btn-outline-secondary" for="int5">Every 5 min</label>
+
+        <input type="radio" class="btn-check" name="intervalPreset" id="int15" value="15">
+        <label class="btn btn-outline-secondary" for="int15">Every 15 min</label>
+
+        <input type="radio" class="btn-check" name="intervalPreset" id="int30" value="30">
+        <label class="btn btn-outline-secondary" for="int30">Every 30 min</label>
+
+        <input type="radio" class="btn-check" name="intervalPreset" id="int60" value="60">
+        <label class="btn btn-outline-secondary" for="int60">Every hour</label>
+
+        <input type="radio" class="btn-check" name="intervalPreset" id="intCustom" value="custom">
+        <label class="btn btn-outline-secondary" for="intCustom">Custom</label>
+      </div>
+
+      <div id="customIntervalSection" class="mb-3" style="display:none">
+        <div class="input-group" style="max-width:220px">
+          <input type="number" class="form-control" id="customValue" value="{{.IntervalMinutes}}" min="1">
+          <select class="form-select" id="customUnit">
+            <option value="1">minutes</option>
+            <option value="60">hours</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Live stats -->
+      <div class="border rounded p-3 bg-white mb-3">
+        <div class="row g-3 text-center">
+          <div class="col-6 col-md-3">
+            <div class="fs-5 fw-semibold" id="statCaptures">–</div>
+            <div class="small text-muted">captures / day</div>
+          </div>
+          <div class="col-6 col-md-3">
+            <div class="fs-5 fw-semibold" id="statSeconds">–</div>
+            <div class="small text-muted">video / day at 30 fps</div>
+          </div>
+          <div class="col-6 col-md-3">
+            <div class="fs-5 fw-semibold" id="statYear">–</div>
+            <div class="small text-muted">video / year at 30 fps</div>
+          </div>
+          <div class="col-6 col-md-3">
+            <div class="fs-5 fw-semibold" id="statMB">–</div>
+            <div class="small text-muted">storage / day</div>
+          </div>
+        </div>
+        <div class="text-muted small text-center mt-2">
+          Based on a 14-hour day. Actual varies by season and location.
+        </div>
+      </div>
+
+      <!-- Test shot -->
+      <div id="testShotSection">
+        <button type="button" class="btn btn-sm btn-outline-secondary" id="testShotBtn"
+                onclick="doTestShot()">Test shot</button>
+        <span class="small text-muted ms-2" id="testShotResult"></span>
+        <div class="form-text">Captures one image to confirm framing, focus, and exposure.</div>
+        <div id="testShotPreview" class="mt-2" style="display:none">
+          <img id="testShotImg" class="rounded border" style="max-width:320px;max-height:240px" alt="Camera preview">
+        </div>
+        <div id="testShotDimWarning" class="mt-1 small text-warning" style="display:none"></div>
+      </div>
+    </div>
+  </div>
+
+  <input type="hidden" name="probeWidth"  id="probeWidth"  value="0">
+  <input type="hidden" name="probeHeight" id="probeHeight" value="0">
+  <button type="submit" class="btn btn-primary">Save Changes</button>
+  <a href="/" class="btn btn-link">Cancel</a>
+</form>
+
+<script>
+  var imageBytesOverride = 0;
+  var originalName   = {{.OriginalName | printf "%q"}};
+  var originalFolder = {{.OriginalFolder | printf "%q"}};
+
+  function applySourceType(type) {
+    document.getElementById('urlSection').style.display  = type !== 'usb' ? '' : 'none';
+    document.getElementById('usbSection').style.display  = type === 'usb' ? '' : 'none';
+    document.getElementById('hintRemote').style.display  = type === 'url'    ? '' : 'none';
+    document.getElementById('hintUSB').style.display     = type === 'usb'    ? '' : 'none';
+    document.getElementById('hintIP').style.display      = type === 'stream' ? '' : 'none';
+    document.getElementById('urlLabel').textContent      =
+      type === 'stream' ? 'Stream URL (rtsp:// or http://)' : 'Camera URL';
+    document.getElementById('testShotPreview').style.display = 'none';
+    document.getElementById('testShotDimWarning').style.display = 'none';
+    document.getElementById('testShotResult').textContent = '';
+    if (type === 'usb') loadDevices();
+  }
+
+  function loadDevices() {
+    var sel = document.getElementById('deviceName');
+    var current = sel.dataset.current || '';
+    sel.innerHTML = '<option value="">Scanning…</option>';
+    fetch('/devices')
+      .then(function(r) { return r.json(); })
+      .then(function(devices) {
+        sel.innerHTML = devices.length
+          ? devices.map(function(d) {
+              var selected = d === current ? ' selected' : '';
+              return '<option value="' + d.replace(/"/g, '&quot;') + '"' + selected + '>' + d + '</option>';
+            }).join('')
+          : '<option value="">No cameras found — connect one and click Scan again</option>';
+      })
+      .catch(function() {
+        sel.innerHTML = '<option value="">Error scanning — try again</option>';
+      });
+  }
+
+  function applyCustomInterval() {
+    var mins = parseInt(document.getElementById('customValue').value) *
+               parseInt(document.getElementById('customUnit').value);
+    if (mins > 0) {
+      document.getElementById('intervalMinutes').value = mins;
+      updateStats(mins);
+    }
+  }
+
+  function updateStats(intervalMins) {
+    var span = 840;
+    var captures = Math.floor(span / intervalMins) + 2;
+    var fps = 30;
+    var secPerDay  = (captures / fps).toFixed(1);
+    var minPerYear = Math.round(captures * 365 / fps / 60);
+    var kbLow  = imageBytesOverride ? Math.round(imageBytesOverride / 1024) : 150;
+    var kbHigh = imageBytesOverride ? Math.round(imageBytesOverride / 1024) : 300;
+    var mbLow  = (captures * kbLow  / 1024).toFixed(0);
+    var mbHigh = (captures * kbHigh / 1024).toFixed(0);
+
+    document.getElementById('statCaptures').textContent = captures;
+    document.getElementById('statSeconds').textContent  = secPerDay + ' s';
+    document.getElementById('statYear').textContent     = minPerYear + ' min';
+    document.getElementById('statMB').textContent       =
+      imageBytesOverride ? mbLow + ' MB' : mbLow + '–' + mbHigh + ' MB';
+  }
+
+  function doTestShot() {
+    var sourceType = document.querySelector('input[name="sourceType"]:checked').value;
+    var url = '';
+    var deviceName = '';
+
+    if (sourceType === 'url' || sourceType === 'stream') {
+      url = document.getElementById('webcamUrl').value.trim();
+      if (!url) {
+        document.getElementById('testShotResult').textContent = 'Enter a URL first.';
+        return;
+      }
+    } else if (sourceType === 'usb') {
+      deviceName = document.getElementById('deviceName').value;
+      if (!deviceName) {
+        document.getElementById('testShotResult').textContent = 'Select a camera first.';
+        return;
+      }
+    }
+
+    var btn = document.getElementById('testShotBtn');
+    btn.disabled = true;
+    document.getElementById('testShotResult').textContent = 'Capturing…';
+    document.getElementById('testShotPreview').style.display = 'none';
+    document.getElementById('testShotDimWarning').style.display = 'none';
+
+    fetch('/probe', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({url: url, deviceName: deviceName, sourceType: sourceType}),
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.error) {
+        document.getElementById('testShotResult').textContent = data.error;
+      } else {
+        var kb = Math.round(data.bytes / 1024);
+        document.getElementById('testShotResult').textContent = '~' + kb + ' KB per image';
+        imageBytesOverride = data.bytes;
+        updateStats(parseInt(document.getElementById('intervalMinutes').value));
+        document.getElementById('probeWidth').value  = data.width  || 0;
+        document.getElementById('probeHeight').value = data.height || 0;
+        if (data.image) {
+          document.getElementById('testShotImg').src = data.image;
+          document.getElementById('testShotPreview').style.display = '';
+        }
+        if (data.width && data.height && (data.width % 2 !== 0 || data.height % 2 !== 0)) {
+          var w2 = data.width  - (data.width  % 2);
+          var h2 = data.height - (data.height % 2);
+          var warn = document.getElementById('testShotDimWarning');
+          warn.textContent = 'Your camera outputs ' + data.width + '×' + data.height +
+            ' frames. LogScene will automatically crop to ' + w2 + '×' + h2 +
+            ' to ensure videos render correctly.';
+          warn.style.display = '';
+        }
+      }
+      btn.disabled = false;
+    })
+    .catch(function() {
+      document.getElementById('testShotResult').textContent = 'Could not reach camera.';
+      btn.disabled = false;
+    });
+  }
+
+  document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function(el) {
+      new bootstrap.Tooltip(el);
+    });
+
+    // ── Source type ───────────────────────────────────────────────
+    document.querySelectorAll('input[name="sourceType"]').forEach(function(r) {
+      r.addEventListener('change', function() { applySourceType(this.value); });
+    });
+    var initialSource = document.querySelector('input[name="sourceType"]:checked').value;
+    // Store current device name before loadDevices replaces the select.
+    var usbSel = document.getElementById('deviceName');
+    usbSel.dataset.current = {{.DeviceName | printf "%q"}};
+    applySourceType(initialSource);
+
+    // ── First / Last fixed-time toggles ──────────────────────────
+    document.querySelectorAll('input[name="firstOption"]').forEach(function(r) {
+      r.addEventListener('change', function() {
+        document.getElementById('firstTimeSection').style.display =
+          this.value === 'firstTime' ? '' : 'none';
+      });
+    });
+    document.querySelectorAll('input[name="lastOption"]').forEach(function(r) {
+      r.addEventListener('change', function() {
+        document.getElementById('lastTimeSection').style.display =
+          this.value === 'lastTime' ? '' : 'none';
+      });
+    });
+
+    // ── Interval presets — pre-select based on current value ──────
+    var currentInterval = parseInt(document.getElementById('intervalMinutes').value) || 15;
+    var presets = [5, 15, 30, 60];
+    var presetIdx = presets.indexOf(currentInterval);
+    if (presetIdx >= 0) {
+      document.querySelectorAll('input[name="intervalPreset"]')[presetIdx].checked = true;
+    } else {
+      document.getElementById('intCustom').checked = true;
+      document.getElementById('customIntervalSection').style.display = '';
+      document.getElementById('customValue').value = currentInterval;
+    }
+
+    document.querySelectorAll('input[name="intervalPreset"]').forEach(function(r) {
+      r.addEventListener('change', function() {
+        var custom = this.value === 'custom';
+        document.getElementById('customIntervalSection').style.display = custom ? '' : 'none';
+        if (!custom) {
+          document.getElementById('intervalMinutes').value = this.value;
+          updateStats(parseInt(this.value));
+        }
+      });
+    });
+    document.getElementById('customValue').addEventListener('input', applyCustomInterval);
+    document.getElementById('customUnit').addEventListener('change', applyCustomInterval);
+
+    updateStats(currentInterval);
+
+    // ── Name change warning ───────────────────────────────────────
+    document.getElementById('name').addEventListener('input', function() {
+      var changed = this.value.trim() !== originalName;
+      document.getElementById('nameChangeWarning').style.display = changed ? '' : 'none';
+    });
+
+    // ── Folder change warning ─────────────────────────────────────
+    document.getElementById('folder').addEventListener('input', function() {
+      var changed = this.value.trim() !== originalFolder;
+      document.getElementById('folderChangeWarning').style.display = changed ? '' : 'none';
+    });
+  });
+</script>
+
+{{end}}
