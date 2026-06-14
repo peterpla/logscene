@@ -14,7 +14,8 @@ import (
 type Config struct {
 	Path     string // directory containing logscene.json
 	PollSecs int    // seconds between capture-due checks
-	Port     string // HTTP listen port
+	// Port is intentionally absent — the server binds to an ephemeral loopback
+	// port via net.Listen("tcp", "127.0.0.1:0") so the OS assigns it.
 	TzdbAPI  string // timezonedb.com API key (required)
 	LogDir   string // directory for daily rotating log files
 	Storage  string // storage backend: "local", "gcs", "s3"
@@ -33,7 +34,7 @@ func (c *Config) Load() {
 func (c *Config) loadFrom(fs *flag.FlagSet, args []string, getenv func(string) string) {
 	path    := fs.String("path",    "", "directory containing logscene.json (env: LOGSCENE_PATH, default: ./)")
 	poll    := fs.Int("poll",       0,  "seconds between time checks (env: LOGSCENE_POLL, default: 60)")
-	port    := fs.String("port",    "", "HTTP port to listen on (env: PORT or LOGSCENE_PORT, default: 8099)")
+	// -port / LOGSCENE_PORT intentionally removed — port is assigned by the OS at startup.
 	tzdb    := fs.String("tzdb",    "", "timezonedb.com API key (env: LOGSCENE_TZDB)")
 	logdir  := fs.String("logdir",  "", "directory for daily log files (env: LOGSCENE_LOGDIR, default: ./logs)")
 	storage := fs.String("storage", "", "storage backend: local, gcs, s3 (env: LOGSCENE_STORAGE, default: local)")
@@ -41,7 +42,6 @@ func (c *Config) loadFrom(fs *flag.FlagSet, args []string, getenv func(string) s
 	fs.Parse(args) //nolint:errcheck
 
 	c.Path    = filepath.ToSlash(coalesce(*path,    getenv("LOGSCENE_PATH"),    "./"))
-	c.Port    = coalesce(*port,    getenv("PORT"),              getenv("LOGSCENE_PORT"), "8099")
 	c.TzdbAPI = coalesce(*tzdb,    getenv("LOGSCENE_TZDB"))
 	c.LogDir  = filepath.ToSlash(coalesce(*logdir,  getenv("LOGSCENE_LOGDIR"),  "./logs"))
 	c.Storage = coalesce(*storage, getenv("LOGSCENE_STORAGE"), "local")
@@ -64,7 +64,6 @@ func (c *Config) loadFrom(fs *flag.FlagSet, args []string, getenv func(string) s
 	slog.Debug("config resolved",
 		"path", c.Path,
 		"pollSecs", c.PollSecs,
-		"port", c.Port,
 		"logDir", c.LogDir,
 		"storage", c.Storage,
 		"baseDir", c.BaseDir,

@@ -156,7 +156,7 @@ or in a `.env` file (not committed to the repo).
 
 | Variable | Purpose | Required |
 |---|---|---|
-| `LOGSCENE_PORT` | HTTP server port (default: 8080) | No |
+| ~~`LOGSCENE_PORT`~~ | Port is now assigned automatically by the OS (ephemeral loopback) | — |
 | `LOGSCENE_LOGDIR` | Directory for log files | Yes (for `make logs`) |
 | `LOGSCENE_FFMPEG_PATH` | Path to ffmpeg.exe if not on PATH | No |
 | `LOGSCENE_LICENSE` | License key (headless deployments) | No |

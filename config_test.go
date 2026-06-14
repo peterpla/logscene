@@ -57,7 +57,6 @@ func TestConfigDefaults(t *testing.T) {
 		}
 	}
 	check("Path", c.Path, "./")
-	check("Port", c.Port, "8099")
 	check("LogDir", c.LogDir, "./logs")
 	check("Storage", c.Storage, "local")
 	check("BaseDir", c.BaseDir, "./captures")
@@ -71,7 +70,6 @@ func TestConfigEnvVars(t *testing.T) {
 	var c Config
 	c.loadFrom(newFS(), nil, envMap(map[string]string{
 		"LOGSCENE_PATH":    "/data",
-		"LOGSCENE_PORT":    "9000",
 		"LOGSCENE_POLL":    "30",
 		"LOGSCENE_TZDB":    "mykey",
 		"LOGSCENE_LOGDIR":  "/var/log",
@@ -81,9 +79,6 @@ func TestConfigEnvVars(t *testing.T) {
 
 	if c.Path != "/data" {
 		t.Errorf("Path = %q, want /data", c.Path)
-	}
-	if c.Port != "9000" {
-		t.Errorf("Port = %q, want 9000", c.Port)
 	}
 	if c.PollSecs != 30 {
 		t.Errorf("PollSecs = %d, want 30", c.PollSecs)
@@ -102,27 +97,6 @@ func TestConfigEnvVars(t *testing.T) {
 	}
 }
 
-func TestConfigPORTBeforeLOGSCENE_PORT(t *testing.T) {
-	var c Config
-	c.loadFrom(newFS(), nil, envMap(map[string]string{
-		"PORT":           "8080",
-		"LOGSCENE_PORT": "9000",
-	}))
-	if c.Port != "8080" {
-		t.Errorf("Port = %q, want 8080 (PORT must take priority over LOGSCENE_PORT)", c.Port)
-	}
-}
-
-func TestConfigFlagOverridesEnv(t *testing.T) {
-	var c Config
-	c.loadFrom(newFS(), []string{"-port", "7777"}, envMap(map[string]string{
-		"PORT":           "8080",
-		"LOGSCENE_PORT": "9000",
-	}))
-	if c.Port != "7777" {
-		t.Errorf("Port = %q, want 7777 (flag must take priority over env vars)", c.Port)
-	}
-}
 
 func TestConfigPollFlag(t *testing.T) {
 	var c Config

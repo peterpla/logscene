@@ -13,9 +13,11 @@ import (
 	"io/fs"
 	"log"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -170,17 +172,24 @@ func main() {
 	srv.router.GET("/render/status", srv.handleRenderStatus())
 	srv.router.POST("/reload", srv.handleReload())
 
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		slog.Info("LogScene couldn't start — could not bind to a port.", "error", err)
+		slog.Debug("net.Listen failed", "failure_class", fcInternalError, "error", err)
+		os.Exit(1)
+	}
+	assignedPort := strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
+	slog.Debug("port assigned", "port", assignedPort)
+
 	hs := &http.Server{
-		Addr:         "127.0.0.1:" + srv.config.Port,
 		Handler:      srv.router,
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
 	}
-	slog.Debug("main: about to listen", "port", srv.config.Port)
-	go startListening(hs)
-	go printStartupSummary(srv.config.Port)
+	go startListening(hs, ln)
+	go printStartupSummary(assignedPort)
 
-	runUI(srv.config.Port)
+	runUI(assignedPort)
 	slog.Debug("main: beginning shutdown")
 	srv.cancel()
 	launchWg.Wait() // ensure all webcamWg.Add calls complete before Wait
@@ -253,15 +262,11 @@ func buildStorage(backend string) Storage {
 	return NewLocalStorage() // default: local
 }
 
-// startListening calls ListenAndServe and logs fatal errors.
-func startListening(hs *http.Server) {
-	if err := hs.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		port := hs.Addr
-		if i := strings.LastIndex(hs.Addr, ":"); i >= 0 {
-			port = hs.Addr[i+1:]
-		}
-		slog.Info("LogScene could not start the server — the port may already be in use by another instance.",
-			"port", port, "error", err)
+// startListening serves on the pre-bound listener and logs fatal errors.
+func startListening(hs *http.Server, ln net.Listener) {
+	if err := hs.Serve(ln); err != nil && err != http.ErrServerClosed {
+		slog.Info("LogScene could not start the server.", "error", err)
+		slog.Debug("server.Serve failed", "failure_class", fcInternalError, "error", err)
 		// TODO Step 4.x: assembleSupportBundle + native MessageBox before exit
 		os.Exit(1)
 	}

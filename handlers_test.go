@@ -35,7 +35,7 @@ func newTestServer(t *testing.T) *server {
 	s := &server{
 		router:       httprouter.New(),
 		validate:     newValidator(),
-		config:       &Config{Path: pathDir, LogDir: logDir, BaseDir: baseDir, PollSecs: 60, Port: "9999"},
+		config:       &Config{Path: pathDir, LogDir: logDir, BaseDir: baseDir, PollSecs: 60},
 		webcams:      newWebcams(),
 		storage:      store,
 		renderer:     NewLocalRenderer(),
