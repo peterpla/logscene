@@ -20,6 +20,7 @@ Last total: 79.9% (commit d7249b0, 2026-06-13)
 ## Windows-only / hardware-dependent
 
 - **`webview_windows.go: ensureSingleInstance / bringExistingWindowToFront / runUI`** — webview2 and mutex-based single-instance enforcement; requires Windows UI environment; build-tagged `//go:build windows`.
+- **`webview_windows.go: showBrowserModeDialog`** — blocking modal TaskDialog; struct layout verified by `TestTaskDialogConfigSize`; dialog display and hyperlink-click path require a machine without WebView2 (see manual-test-checklist.md — "Browser-mode fallback").
 - **`registry.go: readOrSetInstallDate()`** — reads/writes Windows registry; hardware-dependent.
 - **`handlers.go: listDirectShowVideoDevices / parseDirectShowVideoDevices`** — queries DirectShow via ffmpeg; hardware-dependent.
 - **`handlers.go: handleProbe`** — DirectShow device probe; hardware-dependent.
