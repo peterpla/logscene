@@ -1890,11 +1890,11 @@ func TestHandleProbe_badJSON(t *testing.T) {
 	}
 }
 
-func TestHandleProbe_nonURLSourceType(t *testing.T) {
+func TestHandleProbe_usb_emptyDevice(t *testing.T) {
 	srv := newTestServer(t)
 	srv.router.POST("/probe", srv.handleProbe())
 
-	body := `{"url":"http://example.com/cam.jpg","sourceType":"usb"}`
+	body := `{"sourceType":"usb"}`
 	req := httptest.NewRequest(http.MethodPost, "/probe", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -1903,7 +1903,24 @@ func TestHandleProbe_nonURLSourceType(t *testing.T) {
 	var resp struct{ Error string `json:"error"` }
 	json.NewDecoder(w.Body).Decode(&resp)
 	if resp.Error == "" {
-		t.Error("expected error response for non-URL sourceType")
+		t.Error("expected error response for USB with no device selected")
+	}
+}
+
+func TestHandleProbe_stream_invalidURLPrefix(t *testing.T) {
+	srv := newTestServer(t)
+	srv.router.POST("/probe", srv.handleProbe())
+
+	body := `{"url":"ftp://example.com/stream","sourceType":"stream"}`
+	req := httptest.NewRequest(http.MethodPost, "/probe", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	var resp struct{ Error string `json:"error"` }
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Error == "" {
+		t.Error("expected error response for stream with invalid URL prefix")
 	}
 }
 
@@ -1963,6 +1980,7 @@ func TestHandleProbe_success(t *testing.T) {
 
 	var resp struct {
 		Bytes int64  `json:"bytes"`
+		Image string `json:"image"`
 		Error string `json:"error"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
@@ -1973,5 +1991,8 @@ func TestHandleProbe_success(t *testing.T) {
 	}
 	if resp.Bytes == 0 {
 		t.Error("expected non-zero bytes from probe")
+	}
+	if resp.Image == "" {
+		t.Error("expected image data URI in probe response for image/jpeg content-type")
 	}
 }

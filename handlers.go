@@ -5,9 +5,11 @@ package main
 // handlers.go contains all HTTP request handlers.
 
 import (
+	"bytes"
 	"context"
-	"errors"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
@@ -734,13 +736,16 @@ func parseDirectShowVideoDevices(out []byte) []string {
 	return devices
 }
 
-// handleProbe fetches one image from a URL-source camera and returns its size.
-// Only url source type is supported; usb and stream require server-side hardware
-// access that is deferred to a later implementation phase.
+// errFFmpegMissing is returned by probeViaFfmpeg when ffmpeg is not on PATH.
+var errFFmpegMissing = errors.New("ffmpeg not installed")
+
+// handleProbe captures one frame from a webcam and returns its size and a
+// base64-encoded JPEG preview. Supports url, usb, and stream source types.
 func (s *server) handleProbe() httprouter.Handle {
 	return func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 		var req struct {
 			URL        string `json:"url"`
+			DeviceName string `json:"deviceName"`
 			SourceType string `json:"sourceType"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -750,6 +755,7 @@ func (s *server) handleProbe() httprouter.Handle {
 
 		type probeResp struct {
 			Bytes int64  `json:"bytes,omitempty"`
+			Image string `json:"image,omitempty"` // data URI: "data:image/jpeg;base64,..."
 			Error string `json:"error,omitempty"`
 		}
 		respond := func(v probeResp) {
@@ -757,38 +763,106 @@ func (s *server) handleProbe() httprouter.Handle {
 			json.NewEncoder(w).Encode(v)
 		}
 
-		if req.SourceType != "url" {
-			respond(probeResp{Error: "test shot is only supported for Remote Camera (URL) sources"})
-			return
-		}
-		if !strings.HasPrefix(req.URL, "http://") && !strings.HasPrefix(req.URL, "https://") {
-			respond(probeResp{Error: "URL must start with http:// or https://"})
-			return
-		}
-
-		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 		defer cancel()
 
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, req.URL, nil)
-		if err != nil {
-			respond(probeResp{Error: "invalid URL: " + err.Error()})
-			return
-		}
-		resp, err := http.DefaultClient.Do(httpReq)
-		if err != nil {
-			respond(probeResp{Error: "could not reach camera — check the URL and try again"})
-			return
-		}
-		defer resp.Body.Close()
+		switch req.SourceType {
+		case "usb":
+			if req.DeviceName == "" {
+				respond(probeResp{Error: "no device selected"})
+				return
+			}
+			data, err := probeViaFfmpeg(ctx, []string{"-f", "dshow", "-i", "video=" + req.DeviceName, "-frames:v", "1"})
+			if errors.Is(err, errFFmpegMissing) {
+				respond(probeResp{Error: "ffmpeg is not installed — download it from ffmpeg.org and add it to your PATH"})
+				return
+			}
+			if err != nil {
+				respond(probeResp{Error: "could not capture from this camera — make sure it is plugged in and not in use by another application"})
+				return
+			}
+			respond(probeResp{
+				Bytes: int64(len(data)),
+				Image: "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(data),
+			})
 
-		const maxBytes = 10 << 20 // 10 MB guard
-		body, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes))
-		if err != nil {
-			respond(probeResp{Error: "error reading camera response"})
-			return
+		case "stream":
+			if !strings.HasPrefix(req.URL, "rtsp://") && !strings.HasPrefix(req.URL, "rtsps://") &&
+				!strings.HasPrefix(req.URL, "http://") && !strings.HasPrefix(req.URL, "https://") {
+				respond(probeResp{Error: "URL must start with rtsp://, http://, or https://"})
+				return
+			}
+			data, err := probeViaFfmpeg(ctx, []string{"-i", req.URL, "-frames:v", "1"})
+			if errors.Is(err, errFFmpegMissing) {
+				respond(probeResp{Error: "ffmpeg is not installed — download it from ffmpeg.org and add it to your PATH"})
+				return
+			}
+			if err != nil {
+				respond(probeResp{Error: "could not connect to this stream — check the URL and try again"})
+				return
+			}
+			respond(probeResp{
+				Bytes: int64(len(data)),
+				Image: "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(data),
+			})
+
+		default: // "url"
+			if !strings.HasPrefix(req.URL, "http://") && !strings.HasPrefix(req.URL, "https://") {
+				respond(probeResp{Error: "URL must start with http:// or https://"})
+				return
+			}
+			httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, req.URL, nil)
+			if err != nil {
+				respond(probeResp{Error: "invalid URL: " + err.Error()})
+				return
+			}
+			resp, err := http.DefaultClient.Do(httpReq)
+			if err != nil {
+				respond(probeResp{Error: "could not reach camera — check the URL and try again"})
+				return
+			}
+			defer resp.Body.Close()
+
+			const maxBytes = 10 << 20 // 10 MB guard
+			body, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes))
+			if err != nil {
+				respond(probeResp{Error: "error reading camera response"})
+				return
+			}
+			result := probeResp{Bytes: int64(len(body))}
+			ct := resp.Header.Get("Content-Type")
+			if idx := strings.Index(ct, ";"); idx >= 0 {
+				ct = strings.TrimSpace(ct[:idx])
+			}
+			if strings.HasPrefix(ct, "image/") {
+				result.Image = "data:" + ct + ";base64," + base64.StdEncoding.EncodeToString(body)
+			}
+			respond(result)
 		}
-		respond(probeResp{Bytes: int64(len(body))})
 	}
+}
+
+// probeViaFfmpeg captures a single frame via ffmpeg using the given input args
+// and returns the raw JPEG bytes. Returns errFFmpegMissing if ffmpeg is not on PATH.
+func probeViaFfmpeg(ctx context.Context, args []string) ([]byte, error) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		return nil, errFFmpegMissing
+	}
+	tmp, err := os.CreateTemp("", "logscene-probe-*.jpg")
+	if err != nil {
+		return nil, fmt.Errorf("probeViaFfmpeg: create temp file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	tmp.Close()
+	defer os.Remove(tmpPath)
+
+	cmdArgs := append([]string{"-y"}, args...)
+	cmdArgs = append(cmdArgs, "-update", "1", tmpPath)
+	cmd := exec.CommandContext(ctx, "ffmpeg", cmdArgs...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("probeViaFfmpeg: ffmpeg: %w: %s", err, bytes.TrimSpace(out))
+	}
+	return os.ReadFile(tmpPath)
 }
 
 // handleGetLatlong renders the Find Coordinates stub page.

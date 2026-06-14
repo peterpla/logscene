@@ -255,12 +255,15 @@
         </div>
       </div>
 
-      <!-- Test shot (URL sources only) -->
-      <div id="testShotSection" style="display:none">
+      <!-- Test shot -->
+      <div id="testShotSection">
         <button type="button" class="btn btn-sm btn-outline-secondary" id="testShotBtn"
                 onclick="doTestShot()">Test shot</button>
         <span class="small text-muted ms-2" id="testShotResult"></span>
-        <div class="form-text">Fetches one image from your camera to refine the storage estimate.</div>
+        <div class="form-text">Captures one image to confirm framing, focus, and exposure, and refine the storage estimate.</div>
+        <div id="testShotPreview" class="mt-2" style="display:none">
+          <img id="testShotImg" class="rounded border" style="max-width:320px;max-height:240px" alt="Camera preview">
+        </div>
       </div>
     </div>
   </div>
@@ -281,7 +284,8 @@
     document.getElementById('hintIP').style.display      = type === 'stream' ? '' : 'none';
     document.getElementById('urlLabel').textContent      =
       type === 'stream' ? 'Stream URL (rtsp:// or http://)' : 'Camera URL';
-    document.getElementById('testShotSection').style.display = type === 'url' ? '' : 'none';
+    document.getElementById('testShotPreview').style.display = 'none';
+    document.getElementById('testShotResult').textContent = '';
     if (type === 'usb') loadDevices();
   }
 
@@ -341,19 +345,33 @@
   }
 
   function doTestShot() {
-    var url = document.getElementById('webcamUrl').value.trim();
-    if (!url) {
-      document.getElementById('testShotResult').textContent = 'Enter a URL first.';
-      return;
+    var sourceType = document.querySelector('input[name="sourceType"]:checked').value;
+    var url = '';
+    var deviceName = '';
+
+    if (sourceType === 'url' || sourceType === 'stream') {
+      url = document.getElementById('webcamUrl').value.trim();
+      if (!url) {
+        document.getElementById('testShotResult').textContent = 'Enter a URL first.';
+        return;
+      }
+    } else if (sourceType === 'usb') {
+      deviceName = document.getElementById('deviceName').value;
+      if (!deviceName) {
+        document.getElementById('testShotResult').textContent = 'Select a camera first.';
+        return;
+      }
     }
+
     var btn = document.getElementById('testShotBtn');
     btn.disabled = true;
-    document.getElementById('testShotResult').textContent = 'Fetching…';
+    document.getElementById('testShotResult').textContent = 'Capturing…';
+    document.getElementById('testShotPreview').style.display = 'none';
 
     fetch('/probe', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({url: url, sourceType: 'url'}),
+      body: JSON.stringify({url: url, deviceName: deviceName, sourceType: sourceType}),
     })
     .then(function(r) { return r.json(); })
     .then(function(data) {
@@ -365,6 +383,10 @@
         imageBytesOverride = data.bytes;
         var mins = parseInt(document.getElementById('intervalMinutes').value);
         updateStats(mins);
+        if (data.image) {
+          document.getElementById('testShotImg').src = data.image;
+          document.getElementById('testShotPreview').style.display = '';
+        }
       }
       btn.disabled = false;
     })
