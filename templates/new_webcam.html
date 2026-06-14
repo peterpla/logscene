@@ -264,6 +264,7 @@
         <div id="testShotPreview" class="mt-2" style="display:none">
           <img id="testShotImg" class="rounded border" style="max-width:320px;max-height:240px" alt="Camera preview">
         </div>
+        <div id="testShotDimWarning" class="mt-1 small text-warning" style="display:none"></div>
       </div>
     </div>
   </div>
@@ -285,6 +286,7 @@
     document.getElementById('urlLabel').textContent      =
       type === 'stream' ? 'Stream URL (rtsp:// or http://)' : 'Camera URL';
     document.getElementById('testShotPreview').style.display = 'none';
+    document.getElementById('testShotDimWarning').style.display = 'none';
     document.getElementById('testShotResult').textContent = '';
     if (type === 'usb') loadDevices();
   }
@@ -367,6 +369,7 @@
     btn.disabled = true;
     document.getElementById('testShotResult').textContent = 'Capturing…';
     document.getElementById('testShotPreview').style.display = 'none';
+    document.getElementById('testShotDimWarning').style.display = 'none';
 
     fetch('/probe', {
       method: 'POST',
@@ -386,6 +389,15 @@
         if (data.image) {
           document.getElementById('testShotImg').src = data.image;
           document.getElementById('testShotPreview').style.display = '';
+        }
+        if (data.width && data.height && (data.width % 2 !== 0 || data.height % 2 !== 0)) {
+          var w2 = data.width  - (data.width  % 2);
+          var h2 = data.height - (data.height % 2);
+          var warn = document.getElementById('testShotDimWarning');
+          warn.textContent = 'Your camera outputs ' + data.width + '×' + data.height +
+            ' frames. LogScene will automatically crop to ' + w2 + '×' + h2 +
+            ' to ensure videos render correctly.';
+          warn.style.display = '';
         }
       }
       btn.disabled = false;

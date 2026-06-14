@@ -73,6 +73,13 @@ func (s *LocalStorage) List(_ context.Context, prefix string) ([]string, error) 
 	dir := filepath.ToSlash(filepath.Dir(prefix))
 	base := filepath.Base(prefix)
 
+	// If prefix is itself a directory, list all files inside it (no name filter).
+	// This matches MemStorage semantics: keys with prefix "dir/" include all files in dir/.
+	if info, err := os.Stat(prefix); err == nil && info.IsDir() {
+		dir = filepath.ToSlash(prefix)
+		base = ""
+	}
+
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, fmt.Errorf("LocalStorage.List: readdir %s: %w", dir, err)

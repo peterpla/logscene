@@ -5,8 +5,11 @@ package main
 // render_test.go tests LocalRenderer.Render.
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"image"
+	"image/jpeg"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -181,6 +184,76 @@ func TestLocalRenderer_Render_invokesFFmpeg(t *testing.T) {
 		return
 	}
 	t.Log("ffmpeg render succeeded")
+}
+
+// TestLocalRenderer_Render_oddHeight verifies that a single-frame render
+// succeeds when the source JPEG has an odd height (4×3). The crop filter
+// in the ffmpeg args must trim it to 4×2 without libx264 rejecting it.
+// Skipped if ffmpeg is not on PATH.
+func TestLocalRenderer_Render_oddHeight(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not on PATH")
+	}
+
+	img := image.NewGray(image.Rect(0, 0, 4, 3)) // even width, odd height
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, nil); err != nil {
+		t.Fatalf("jpeg.Encode: %v", err)
+	}
+
+	dir := t.TempDir()
+	framePath := filepath.Join(dir, "Cam 20260601120000.jpg")
+	if err := os.WriteFile(framePath, buf.Bytes(), 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	outputPath := filepath.Join(dir, "out.mp4")
+	if err := NewLocalRenderer().Render(context.Background(), dir, outputPath, RenderOptions{FPS: 24}); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+
+	info, err := os.Stat(outputPath)
+	if err != nil {
+		t.Fatalf("output file not created: %v", err)
+	}
+	if info.Size() == 0 {
+		t.Error("output file is empty")
+	}
+}
+
+// TestLocalRenderer_Render_oddWidth verifies that a single-frame render
+// succeeds when the source JPEG has an odd width (3×4). The crop filter
+// in the ffmpeg args must trim it to 2×4 without libx264 rejecting it.
+// Skipped if ffmpeg is not on PATH.
+func TestLocalRenderer_Render_oddWidth(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not on PATH")
+	}
+
+	img := image.NewGray(image.Rect(0, 0, 3, 4)) // odd width, even height
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, nil); err != nil {
+		t.Fatalf("jpeg.Encode: %v", err)
+	}
+
+	dir := t.TempDir()
+	framePath := filepath.Join(dir, "Cam 20260601120000.jpg")
+	if err := os.WriteFile(framePath, buf.Bytes(), 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	outputPath := filepath.Join(dir, "out.mp4")
+	if err := NewLocalRenderer().Render(context.Background(), dir, outputPath, RenderOptions{FPS: 24}); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+
+	info, err := os.Stat(outputPath)
+	if err != nil {
+		t.Fatalf("output file not created: %v", err)
+	}
+	if info.Size() == 0 {
+		t.Error("output file is empty")
+	}
 }
 
 // ---------------------------------------------------------------------------

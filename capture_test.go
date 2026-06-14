@@ -796,3 +796,44 @@ func TestCaptureImage_stream(t *testing.T) {
 		t.Errorf("key %q should end in .jpg", key)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Benchmarks — crop filter overhead per capture
+//
+// Run with: go test -bench=BenchmarkCaptureViaFfmpeg_crop -benchtime=10x
+// Skipped automatically when ffmpeg is not on PATH.
+// Uses a lavfi synthetic source at 1279×719 (odd in both dimensions, matching
+// the worst-case scenario for a near-HD camera) so the only variable is the
+// presence of the crop filter.
+// ---------------------------------------------------------------------------
+
+func BenchmarkCaptureViaFfmpeg_noCrop(b *testing.B) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		b.Skip("ffmpeg not on PATH")
+	}
+	store := NewMemStorage()
+	ctx := context.Background()
+	args := []string{"-f", "lavfi", "-i", "color=size=1279x719:rate=1", "-frames:v", "1"}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := captureViaFfmpeg(ctx, args, store, "bench/frame.jpg"); err != nil {
+			b.Fatalf("captureViaFfmpeg: %v", err)
+		}
+	}
+}
+
+func BenchmarkCaptureViaFfmpeg_withCrop(b *testing.B) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		b.Skip("ffmpeg not on PATH")
+	}
+	store := NewMemStorage()
+	ctx := context.Background()
+	args := []string{"-f", "lavfi", "-i", "color=size=1279x719:rate=1", "-frames:v", "1",
+		"-vf", "crop=trunc(iw/2)*2:trunc(ih/2)*2"}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := captureViaFfmpeg(ctx, args, store, "bench/frame.jpg"); err != nil {
+			b.Fatalf("captureViaFfmpeg: %v", err)
+		}
+	}
+}

@@ -5,9 +5,13 @@ package main
 // handlers_test.go tests HTTP handlers using httptest.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/color"
+	"image/jpeg"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -1994,5 +1998,48 @@ func TestHandleProbe_success(t *testing.T) {
 	}
 	if resp.Image == "" {
 		t.Error("expected image data URI in probe response for image/jpeg content-type")
+	}
+}
+
+// TestHandleProbe_dimensions verifies that Width and Height are returned for a
+// valid JPEG response, and that odd dimensions are reported correctly.
+func TestHandleProbe_dimensions(t *testing.T) {
+	// Build a real 3×4 JPEG (odd width, even height).
+	img := image.NewGray(image.Rect(0, 0, 3, 4))
+	img.SetGray(0, 0, color.Gray{Y: 128})
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, nil); err != nil {
+		t.Fatalf("jpeg.Encode: %v", err)
+	}
+	imgBytes := buf.Bytes()
+
+	camServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/jpeg")
+		w.Write(imgBytes)
+	}))
+	defer camServer.Close()
+
+	srv := newTestServer(t)
+	srv.router.POST("/probe", srv.handleProbe())
+
+	body := fmt.Sprintf(`{"url":"%s/cam.jpg","sourceType":"url"}`, camServer.URL)
+	req := httptest.NewRequest(http.MethodPost, "/probe", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	var resp struct {
+		Width  int    `json:"width"`
+		Height int    `json:"height"`
+		Error  string `json:"error"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Error != "" {
+		t.Fatalf("unexpected error: %q", resp.Error)
+	}
+	if resp.Width != 3 || resp.Height != 4 {
+		t.Errorf("dimensions: want 3×4, got %d×%d", resp.Width, resp.Height)
 	}
 }

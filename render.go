@@ -89,7 +89,11 @@ func NewLocalRenderer() *LocalRenderer {
 // ffmpeg is invoked with:
 //
 //	ffmpeg -y -f concat -safe 0 -r <fps> -i <tmpfile> \
+//	       -vf crop=trunc(iw/2)*2:trunc(ih/2)*2 \
 //	       -c:v libx264 -pix_fmt yuv420p <outputKey>
+//
+// The crop filter is a no-op for standard even-dimension frames and silently
+// trims 1px on any odd dimension to satisfy the libx264/yuv420p requirement.
 func (r *LocalRenderer) Render(ctx context.Context, dir, outputKey string, opts RenderOptions) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -161,6 +165,7 @@ func (r *LocalRenderer) Render(ctx context.Context, dir, outputKey string, opts 
 		"-safe", "0",
 		"-r", strconv.Itoa(fps),
 		"-i", tmp.Name(),
+		"-vf", "crop=trunc(iw/2)*2:trunc(ih/2)*2",
 		"-c:v", "libx264",
 		"-pix_fmt", "yuv420p",
 		outputKey,

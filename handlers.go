@@ -10,6 +10,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"image"
+	_ "image/jpeg"
 	"fmt"
 	"html/template"
 	"io"
@@ -754,9 +756,11 @@ func (s *server) handleProbe() httprouter.Handle {
 		}
 
 		type probeResp struct {
-			Bytes int64  `json:"bytes,omitempty"`
-			Image string `json:"image,omitempty"` // data URI: "data:image/jpeg;base64,..."
-			Error string `json:"error,omitempty"`
+			Bytes  int64  `json:"bytes,omitempty"`
+			Image  string `json:"image,omitempty"` // data URI: "data:image/jpeg;base64,..."
+			Width  int    `json:"width,omitempty"`
+			Height int    `json:"height,omitempty"`
+			Error  string `json:"error,omitempty"`
 		}
 		respond := func(v probeResp) {
 			w.Header().Set("Content-Type", "application/json")
@@ -781,9 +785,12 @@ func (s *server) handleProbe() httprouter.Handle {
 				respond(probeResp{Error: "could not capture from this camera — make sure it is plugged in and not in use by another application"})
 				return
 			}
+			w, h := jpegDimensions(data)
 			respond(probeResp{
-				Bytes: int64(len(data)),
-				Image: "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(data),
+				Bytes:  int64(len(data)),
+				Image:  "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(data),
+				Width:  w,
+				Height: h,
 			})
 
 		case "stream":
@@ -801,9 +808,12 @@ func (s *server) handleProbe() httprouter.Handle {
 				respond(probeResp{Error: "could not connect to this stream — check the URL and try again"})
 				return
 			}
+			w, h := jpegDimensions(data)
 			respond(probeResp{
-				Bytes: int64(len(data)),
-				Image: "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(data),
+				Bytes:  int64(len(data)),
+				Image:  "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(data),
+				Width:  w,
+				Height: h,
 			})
 
 		default: // "url"
@@ -836,10 +846,21 @@ func (s *server) handleProbe() httprouter.Handle {
 			}
 			if strings.HasPrefix(ct, "image/") {
 				result.Image = "data:" + ct + ";base64," + base64.StdEncoding.EncodeToString(body)
+				result.Width, result.Height = jpegDimensions(body)
 			}
 			respond(result)
 		}
 	}
+}
+
+// jpegDimensions returns the pixel dimensions of a JPEG by reading its header.
+// Returns 0, 0 if the data is not a valid JPEG or dimensions cannot be read.
+func jpegDimensions(data []byte) (w, h int) {
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return 0, 0
+	}
+	return cfg.Width, cfg.Height
 }
 
 // probeViaFfmpeg captures a single frame via ffmpeg using the given input args
