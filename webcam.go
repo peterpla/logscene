@@ -64,7 +64,8 @@ type Webcam struct {
 	SourceType string `json:"sourceType,omitempty"`          // "url" (default) | "usb" | "stream"
 	DeviceName string `json:"deviceName,omitempty"`          // DirectShow device name; required when SourceType == "usb"
 	WebcamTZ   string `json:"webcamTZ,omitempty"`            // IANA timezone name, cached after first lookup
-	Disabled   bool   `json:"disabled,omitempty"`            // true = skip at startup; operator-set
+	Disabled        bool `json:"disabled,omitempty"`        // true = skip at startup; operator-set
+	RecoveryPending bool `json:"recoveryPending,omitempty"` // true after Keep Trying on auto-suspend modal
 
 	// --- runtime fields (not persisted) ---
 	mu           sync.RWMutex   `json:"-"`
@@ -80,6 +81,8 @@ type Webcam struct {
 	Backoff      time.Duration  `json:"-"` // exponential backoff for tier-1 outages
 	FirstFailure time.Time      `json:"-"` // when current failure streak started; zero = no streak
 	LastAttempt  time.Time      `json:"-"` // when capture was last attempted
+	CaptureCountToday   int    `json:"-"` // captures completed today; seeded at goroutine startup
+	ScheduledCountToday int    `json:"-"` // captures scheduled today; computed from DayFirst/DayLast
 }
 
 // newWebcam returns an initialized Webcam.

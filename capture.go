@@ -32,6 +32,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"time"
 )
 
@@ -51,6 +52,7 @@ func capture(ctx context.Context, wc *Webcam, pollInterval time.Duration, srv *s
 	if wc.Disabled {
 		slog.Info("webcam disabled — no captures", "webcam", wc.Name)
 		slog.Debug("webcam disabled at startup, goroutine exiting", "webcam", wc.Name)
+		srv.status.Set(wc.Name, StatusDisabled, "", "")
 		return
 	}
 
@@ -105,6 +107,21 @@ func capture(ctx context.Context, wc *Webcam, pollInterval time.Duration, srv *s
 	snapLastFlags := wc.LastFlags
 	wc.mu.RUnlock()
 
+	// Seed CaptureCountToday by counting existing capture files for today's
+	// schedule date (handles mid-day restarts). Compute ScheduledCountToday
+	// from the day's first/last capture times and interval.
+	if !snapFirst.IsZero() {
+		dateStr := snapFirst.UTC().Format("20060102")
+		matches, _ := filepath.Glob(filepath.Join(srv.config.BaseDir, wc.Folder, "*"+dateStr+"*"))
+		interval := time.Duration(snapInterval) * time.Minute
+		wc.mu.Lock()
+		wc.CaptureCountToday = len(matches)
+		if interval > 0 {
+			wc.ScheduledCountToday = int(snapLast.Sub(snapFirst)/interval) + 1
+		}
+		wc.mu.Unlock()
+	}
+
 	var solarDate string
 	if snapLoc != nil {
 		solarDate = snapSunrise.In(snapLoc).Format("2006-01-02")
@@ -122,6 +139,10 @@ func capture(ctx context.Context, wc *Webcam, pollInterval time.Duration, srv *s
 
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
+
+	// lastVotedTier tracks which tier we last voted StatusIssues for, so we
+	// only vote once per tier transition (1→2 at 24 h, 2→3 at 48 h).
+	var lastVotedTier int
 
 	for {
 		select {
@@ -150,6 +171,7 @@ func capture(ctx context.Context, wc *Webcam, pollInterval time.Duration, srv *s
 				wc.mu.RLock()
 				since := time.Since(wc.FirstFailure).Truncate(time.Minute)
 				backoff := wc.nextRetryInterval()
+				tier := captureTierNum(wc.FirstFailure)
 				wc.mu.RUnlock()
 				effectiveNext := max(backoff, pollInterval)
 				slog.Debug("CaptureImage failed",
@@ -158,10 +180,17 @@ func capture(ctx context.Context, wc *Webcam, pollInterval time.Duration, srv *s
 					"error", err,
 					"outage_duration", since,
 					"next_retry_in", effectiveNext)
+				// Vote StatusIssues once per tier transition (tier 1→2 at 24 h, 2→3 at 48 h).
+				if tier > lastVotedTier {
+					lastVotedTier = tier
+					srv.status.Set(wc.Name, StatusIssues, "", "")
+				}
 				continue
 			}
 
 			wc.recordSuccess()
+			lastVotedTier = 0
+			srv.status.Set(wc.Name, StatusActive, "", "")
 			slog.Debug("captured", "webcam", wc.Name, "filePath", key, "bytes", size)
 
 			if err := wc.UpdateNextCapture(ctx, srv.tz, srv.solar); err != nil {
@@ -172,6 +201,22 @@ func capture(ctx context.Context, wc *Webcam, pollInterval time.Duration, srv *s
 				return
 			}
 		}
+	}
+}
+
+// captureTierNum returns the current outage tier (1/2/3) based on how long
+// the failure streak has lasted, or 0 if there is no active streak.
+func captureTierNum(firstFailure time.Time) int {
+	if firstFailure.IsZero() {
+		return 0
+	}
+	switch elapsed := time.Since(firstFailure); {
+	case elapsed < outageTier2After:
+		return 1
+	case elapsed < outageTier3After:
+		return 2
+	default:
+		return 3
 	}
 }
 
@@ -251,6 +296,7 @@ func (wc *Webcam) recordSuccess() {
 	wc.FirstFailure = time.Time{}
 	wc.LastAttempt = time.Time{}
 	wc.Backoff = 0
+	wc.CaptureCountToday++
 }
 
 // IsTimeForCapture returns true if the current wall-clock time is at or past
@@ -401,6 +447,14 @@ func (wc *Webcam) UpdateNextCapture(ctx context.Context, tzClient TimezoneClient
 			return ctx.Err()
 		}
 	}
+
+	// Reset daily counters for the new day now that SetCaptureTimes succeeded.
+	wc.mu.Lock()
+	wc.CaptureCountToday = 0
+	if interval := time.Duration(wc.IntervalMinutes) * time.Minute; interval > 0 {
+		wc.ScheduledCountToday = int(wc.DayLast.Sub(wc.DayFirst)/interval) + 1
+	}
+	wc.mu.Unlock()
 
 	wc.mu.RLock()
 	snapFirst := wc.DayFirst

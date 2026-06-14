@@ -1,0 +1,44 @@
+{{define "content"}}
+<div class="d-flex align-items-center mb-4">
+  <h5 class="mb-0">Notifications</h5>
+</div>
+
+{{if eq (len .Notifications) 0}}
+<p class="text-muted">No notifications.</p>
+{{else}}
+<div class="d-flex flex-column gap-3">
+  {{range .Notifications}}
+  <div class="card{{if .Dismissed}} opacity-50{{end}}">
+    <div class="card-body">
+      <div class="d-flex justify-content-between align-items-start mb-1">
+        <h6 class="card-title mb-0">{{.Title}}</h6>
+        <small class="text-muted ms-2 text-nowrap">{{.Timestamp.Format "Jan 2, 3:04 PM"}}</small>
+      </div>
+      <p class="card-text small mb-2">{{.Message}}</p>
+      {{if not .Dismissed}}
+      <div class="d-flex gap-2">
+        {{if eq .Buttons 0}}
+        <button class="btn btn-sm btn-outline-primary" disabled title="Support bundle available in a future update">Send Diagnostic</button>
+        <form method="post" action="/notifications/{{.ID}}/dismiss">
+          <button type="submit" class="btn btn-sm btn-outline-secondary">No Thanks</button>
+        </form>
+        {{else if eq .Buttons 1}}
+        <button class="btn btn-sm btn-outline-primary" disabled title="Support bundle available in a future update">Send Diagnostic</button>
+        <form method="post" action="/notifications/{{.ID}}/dismiss">
+          <button type="submit" class="btn btn-sm btn-outline-secondary">Continue</button>
+        </form>
+        {{else}}
+        <form method="post" action="/notifications/{{.ID}}/dismiss">
+          <button type="submit" class="btn btn-sm btn-outline-secondary">Dismiss</button>
+        </form>
+        {{end}}
+      </div>
+      {{else}}
+      <span class="text-muted small">Dismissed</span>
+      {{end}}
+    </div>
+  </div>
+  {{end}}
+</div>
+{{end}}
+{{end}}

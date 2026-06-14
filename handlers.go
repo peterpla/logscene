@@ -26,45 +26,52 @@ import (
 
 // webcamCardData summarises one webcam for display on the dashboard.
 type webcamCardData struct {
-	Name            string
-	Folder          string
-	SourceType      string
-	IntervalMinutes int
-	StatusLabel     string
-	StatusClass     string // Bootstrap bg-* colour token
-	NextCapture     string // formatted time or short status string
-	CapturesToday   int
-	CanRender       bool // true if capture folder contains 2+ .jpg files on disk
+	Name                string
+	Folder              string
+	SourceType          string
+	IntervalMinutes     int
+	StatusLabel         string
+	StatusClass         string // Bootstrap bg-* colour token
+	StatusTooltip       string // Bootstrap tooltip text for the status badge
+	RecoveryPending     bool   // true = show (?) tooltip on Issues badge
+	NextCapture         string // formatted time, "Done for today", or "" when Initializing
+	CaptureCountToday   int
+	ScheduledCountToday int
+	Initializing        bool // true when DayFirst not yet set (schedule pending)
+	CanRender           bool // true if capture folder contains 2+ .jpg files on disk
 }
 
 // dashboardData is the template context for the dashboard page.
 type dashboardData struct {
-	Page          string
-	Title         string
-	Trial         TrialState
-	Webcams       []webcamCardData
-	RendersDir    string // OS-native path to BaseDir/renders for display in render modal
-	DaysRemaining int    // days until trial expires; 0 on day 30, negative after
-	ExpiryDate    string // formatted expiry date for amber countdown display
+	Page                string
+	Title               string
+	Trial               TrialState
+	Webcams             []webcamCardData
+	RendersDir          string // OS-native path to BaseDir/renders for display in render modal
+	DaysRemaining       int    // days until trial expires; 0 on day 30, negative after
+	ExpiryDate          string // formatted expiry date for amber countdown display
+	UnreadNotifications int
 }
 
 // newWebcamData is the template context for the add-webcam form.
 type newWebcamData struct {
-	Page  string
-	Title string
-	Trial TrialState
+	Page                string
+	Title               string
+	Trial               TrialState
+	UnreadNotifications int
 }
 
 // writeFailureData is the template context for the Write failure modal.
 type writeFailureData struct {
-	Page          string
-	Title         string
-	Trial         TrialState
-	Webcam        *Webcam
-	SourceLabel   string // "URL" or "Device"
-	SourceValue   string // wc.URL or wc.DeviceName
-	ScheduleDesc  string // "sunrise to sunset−30 min"
-	ClipboardText string
+	Page                string
+	Title               string
+	Trial               TrialState
+	Webcam              *Webcam
+	SourceLabel         string // "URL" or "Device"
+	SourceValue         string // wc.URL or wc.DeviceName
+	ScheduleDesc        string // "sunrise to sunset−30 min"
+	ClipboardText       string
+	UnreadNotifications int
 }
 
 // writeFailureFields computes the display and clipboard fields for writeFailureData.
@@ -106,7 +113,7 @@ func writeFailureFields(wc *Webcam) (sourceLabel, sourceValue, scheduleDesc, cli
 }
 
 // webcamCard builds display data from a live Webcam, holding its read lock.
-func webcamCard(wc *Webcam, baseDir string) webcamCardData {
+func webcamCard(wc *Webcam, baseDir string, sc *StatusCenter) webcamCardData {
 	wc.mu.RLock()
 	defer wc.mu.RUnlock()
 
@@ -115,36 +122,44 @@ func webcamCard(wc *Webcam, baseDir string) webcamCardData {
 		Folder:          wc.Folder,
 		SourceType:      wc.SourceType,
 		IntervalMinutes: wc.IntervalMinutes,
+		RecoveryPending: wc.RecoveryPending,
 	}
 	if d.SourceType == "" {
 		d.SourceType = "url"
 	}
 
-	switch {
-	case wc.Disabled:
-		d.StatusLabel, d.StatusClass = "Disabled", "secondary"
-	case !wc.FirstFailure.IsZero():
-		d.StatusLabel, d.StatusClass = "Error", "warning"
-	default:
-		d.StatusLabel, d.StatusClass = "Active", "success"
+	// Prefer a StatusCenter vote; fall back to field-based heuristic before the
+	// first vote arrives (e.g. at startup before the goroutine has run).
+	if s, ok := sc.Get(wc.Name); ok {
+		d.StatusLabel = s.Label()
+		d.StatusClass = s.BadgeClass()
+		d.StatusTooltip = s.TooltipText()
+		if s == StatusIssues && wc.RecoveryPending {
+			d.StatusTooltip = "Still waiting for a successful capture — badge turns green once one succeeds."
+		}
+	} else {
+		var s WebcamStatus
+		switch {
+		case wc.Disabled:
+			s = StatusDisabled
+		case !wc.FirstFailure.IsZero():
+			s = StatusIssues
+		default:
+			s = StatusActive
+		}
+		d.StatusLabel = s.Label()
+		d.StatusClass = s.BadgeClass()
+		d.StatusTooltip = s.TooltipText()
 	}
 
+	d.CaptureCountToday = wc.CaptureCountToday
+	d.ScheduledCountToday = wc.ScheduledCountToday
 	switch {
 	case wc.DayFirst.IsZero():
-		d.CapturesToday = 0
-		d.NextCapture = "Pending"
+		d.Initializing = true
 	case wc.NextCaptureAt.IsZero():
-		// Done for today — compute total scheduled captures.
-		interval := time.Duration(wc.IntervalMinutes) * time.Minute
-		if interval > 0 {
-			d.CapturesToday = int(wc.DayLast.Sub(wc.DayFirst)/interval) + 1
-		}
 		d.NextCapture = "Done for today"
 	default:
-		interval := time.Duration(wc.IntervalMinutes) * time.Minute
-		if interval > 0 {
-			d.CapturesToday = int(wc.NextCaptureAt.Sub(wc.DayFirst) / interval)
-		}
 		if wc.WebcamLoc != nil {
 			d.NextCapture = wc.NextCaptureAt.In(wc.WebcamLoc).Format("3:04 PM MST")
 		} else {
@@ -166,7 +181,7 @@ func (s *server) handleHome() httprouter.Handle {
 		s.mu.RLock()
 		cards := make([]webcamCardData, 0, len(*s.webcams))
 		for _, wc := range *s.webcams {
-			cards = append(cards, webcamCard(wc, s.config.BaseDir))
+			cards = append(cards, webcamCard(wc, s.config.BaseDir, s.status))
 		}
 		trial := s.trial
 		s.mu.RUnlock()
@@ -177,13 +192,14 @@ func (s *server) handleHome() httprouter.Handle {
 			daysRemaining = 0
 		}
 		data := dashboardData{
-			Page:          "dashboard",
-			Title:         "Dashboard",
-			Trial:         trial,
-			Webcams:       cards,
-			RendersDir:    filepath.Join(filepath.FromSlash(s.config.BaseDir), "renders"),
-			DaysRemaining: daysRemaining,
-			ExpiryDate:    s.installDate.AddDate(0, 0, 30).Format("January 2, 2006"),
+			Page:                "dashboard",
+			Title:               "Dashboard",
+			Trial:               trial,
+			Webcams:             cards,
+			RendersDir:          filepath.Join(filepath.FromSlash(s.config.BaseDir), "renders"),
+			DaysRemaining:       daysRemaining,
+			ExpiryDate:          s.installDate.AddDate(0, 0, 30).Format("January 2, 2006"),
+			UnreadNotifications: s.notifications.UnreadCount(),
 		}
 		if err := s.tmplDashboard.ExecuteTemplate(w, "base", data); err != nil {
 			slog.Debug("template execution error", "handler", "handleHome", "failure_class", fcInternalError, "error", err)
@@ -200,9 +216,10 @@ func (s *server) handleGetNew() httprouter.Handle {
 		s.mu.RUnlock()
 
 		data := newWebcamData{
-			Page:  "new-webcam",
-			Title: "Add Webcam",
-			Trial: trial,
+			Page:                "new-webcam",
+			Title:               "Add Webcam",
+			Trial:               trial,
+			UnreadNotifications: s.notifications.UnreadCount(),
 		}
 		if err := s.tmplNewWebcam.ExecuteTemplate(w, "base", data); err != nil {
 			slog.Debug("template execution error", "handler", "handleGetNew", "failure_class", fcInternalError, "error", err)
@@ -333,14 +350,15 @@ func (s *server) handleNew() httprouter.Handle {
 				"error", err)
 			sl, sv, sd, ct := writeFailureFields(wc)
 			data := writeFailureData{
-				Page:          "new-webcam",
-				Title:         "Webcam Not Saved",
-				Trial:         trial,
-				Webcam:        wc,
-				SourceLabel:   sl,
-				SourceValue:   sv,
-				ScheduleDesc:  sd,
-				ClipboardText: ct,
+				Page:                "new-webcam",
+				Title:               "Webcam Not Saved",
+				Trial:               trial,
+				Webcam:              wc,
+				SourceLabel:         sl,
+				SourceValue:         sv,
+				ScheduleDesc:        sd,
+				ClipboardText:       ct,
+				UnreadNotifications: s.notifications.UnreadCount(),
 			}
 			w.WriteHeader(http.StatusInternalServerError)
 			if tmplErr := s.tmplWriteFailure.ExecuteTemplate(w, "base", data); tmplErr != nil {
@@ -466,12 +484,13 @@ func (s *server) handleLogs() httprouter.Handle {
 		}
 
 		data := struct {
-			Page     string
-			Title    string
-			Trial    TrialState
-			LogLines string
-			NotFound bool
-		}{"logs", "Logs", s.trial, logLines, err != nil}
+			Page                string
+			Title               string
+			Trial               TrialState
+			LogLines            string
+			NotFound            bool
+			UnreadNotifications int
+		}{"logs", "Logs", s.trial, logLines, err != nil, s.notifications.UnreadCount()}
 		if err := s.tmplLogs.ExecuteTemplate(w, "base", data); err != nil {
 			slog.Debug("template execution error", "handler", "handleLogs", "failure_class", fcInternalError, "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -539,6 +558,11 @@ func (s *server) handleRender() httprouter.Handle {
 				slog.Info("render failed", "webcam", req.Folder, "output", fullOutput, "failure_class", class)
 				slog.Debug("handleRender: render failed", "webcam", req.Folder, "output", fullOutput, "failure_class", class, "error", debugErr)
 				s.renderJobs.Store(fullOutput, renderJobStatus{Status: "error", Message: msg})
+				s.notifications.Add(Notification{
+					Title:   "Render failed",
+					Message: fmt.Sprintf("Could not create video for %q. %s", req.Folder, msg),
+					Buttons: ButtonDiagnosticOptional,
+				})
 			} else {
 				ts := time.Now().Format("20060102_1504")
 				ext := filepath.Ext(fullOutput)
@@ -771,10 +795,11 @@ func (s *server) handleProbe() httprouter.Handle {
 func (s *server) handleGetLatlong() httprouter.Handle {
 	return func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 		data := struct {
-			Page  string
-			Title string
-			Trial TrialState
-		}{"", "Find Coordinates", s.trial}
+			Page                string
+			Title               string
+			Trial               TrialState
+			UnreadNotifications int
+		}{"", "Find Coordinates", s.trial, s.notifications.UnreadCount()}
 		if err := s.tmplLatlong.ExecuteTemplate(w, "base", data); err != nil {
 			slog.Debug("template execution error", "handler", "handleGetLatlong", "failure_class", fcInternalError, "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -813,5 +838,60 @@ func (s *server) initTemplates() error {
 	if s.tmplWriteFailure, err = parse("write_failure"); err != nil {
 		return err
 	}
+	if s.tmplNotifications, err = parse("notifications"); err != nil {
+		return err
+	}
 	return nil
+}
+
+// handleGetNotifications renders the notification center page.
+func (s *server) handleGetNotifications() httprouter.Handle {
+	return func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+		data := struct {
+			Page                string
+			Title               string
+			Trial               TrialState
+			UnreadNotifications int
+			Notifications       []Notification
+		}{
+			Page:                "notifications",
+			Title:               "Notifications",
+			Trial:               s.trial,
+			UnreadNotifications: s.notifications.UnreadCount(),
+			Notifications:       s.notifications.All(),
+		}
+		if err := s.tmplNotifications.ExecuteTemplate(w, "base", data); err != nil {
+			slog.Debug("template execution error", "handler", "handleGetNotifications", "failure_class", fcInternalError, "error", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}
+}
+
+// handleDismissNotification marks a notification as dismissed and redirects
+// back to the notifications page.
+func (s *server) handleDismissNotification() httprouter.Handle {
+	return func(w http.ResponseWriter, r *http.Request, p httprouter.Params) {
+		s.notifications.Dismiss(p.ByName("id"))
+		http.Redirect(w, r, "/notifications", http.StatusSeeOther)
+	}
+}
+
+// handleOpenFolder opens the webcam's capture folder in Windows Explorer.
+// The folder parameter is validated to stay within BaseDir.
+func (s *server) handleOpenFolder() httprouter.Handle {
+	return func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+		folder := r.URL.Query().Get("folder")
+		if folder == "" {
+			http.Error(w, "folder required", http.StatusBadRequest)
+			return
+		}
+		base := filepath.Clean(s.config.BaseDir)
+		resolved := filepath.Clean(filepath.Join(base, folder))
+		if !strings.HasPrefix(resolved, base+string(filepath.Separator)) {
+			http.Error(w, "invalid folder path", http.StatusBadRequest)
+			return
+		}
+		exec.Command("explorer.exe", resolved).Start() //nolint:errcheck
+		w.WriteHeader(http.StatusNoContent)
+	}
 }

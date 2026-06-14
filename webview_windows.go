@@ -140,14 +140,18 @@ func showBrowserModeDialog(port string) {
 // until the window is closed or SIGINT is received. If the WebView2 runtime
 // is not installed, it falls back to blocking on SIGINT and logs a message
 // so the user can open the URL in a browser.
-func runUI(port string) {
+func runUI(port string, nc *NotificationCenter) {
 	w := webview.New(false)
 	if w == nil {
 		url := fmt.Sprintf("http://127.0.0.1:%s", port)
 		slog.Info("running in browser mode — WebView2 runtime not available", "url", url)
 		slog.Debug("webview.New returned nil — WebView2 runtime not installed; falling back to browser mode", "url", url)
 		showBrowserModeDialog(port)
-		// TODO Step 6i: add notification center entry for browser-mode fallback
+		nc.Add(Notification{
+			Title:   "LogScene is running in browser mode",
+			Message: "To restore the native window, install the WebView2 runtime. See KB article [Y].",
+			Buttons: ButtonDismissOnly,
+		})
 		c := make(chan os.Signal, 1)
 		signal.Notify(c, os.Interrupt)
 		<-c

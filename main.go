@@ -32,11 +32,12 @@ type server struct {
 	router        *httprouter.Router
 	validate      *validator.Validate
 	config        *Config
-	tmplDashboard    *template.Template
-	tmplNewWebcam    *template.Template
-	tmplLatlong      *template.Template
-	tmplLogs         *template.Template
-	tmplWriteFailure *template.Template
+	tmplDashboard     *template.Template
+	tmplNewWebcam     *template.Template
+	tmplLatlong       *template.Template
+	tmplLogs          *template.Template
+	tmplWriteFailure  *template.Template
+	tmplNotifications *template.Template
 	webcams      *Webcams       // all configured webcams; protected by mu
 	storage      Storage
 	renderer     Renderer
@@ -54,6 +55,8 @@ type server struct {
 	installDate  time.Time
 	trial        TrialState
 	renderJobs   sync.Map // fullOutputPath → renderJobStatus; entries deleted after first terminal read
+	status        *StatusCenter
+	notifications *NotificationCenter
 }
 
 var (
@@ -171,6 +174,9 @@ func main() {
 	srv.router.POST("/render", srv.handleRender())
 	srv.router.GET("/render/status", srv.handleRenderStatus())
 	srv.router.POST("/reload", srv.handleReload())
+	srv.router.GET("/notifications", srv.handleGetNotifications())
+	srv.router.POST("/notifications/:id/dismiss", srv.handleDismissNotification())
+	srv.router.GET("/open-folder", srv.handleOpenFolder())
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -189,7 +195,7 @@ func main() {
 	go startListening(hs, ln)
 	go printStartupSummary(assignedPort)
 
-	runUI(assignedPort)
+	runUI(assignedPort, srv.notifications)
 	slog.Debug("main: beginning shutdown")
 	srv.cancel()
 	launchWg.Wait() // ensure all webcamWg.Add calls complete before Wait
@@ -244,9 +250,11 @@ func newServer() *server {
 		cancel:       cancel,
 		webcamCtx:    webcamCtx,
 		webcamCancel: webcamCancel,
-		startTime:   time.Now(),
-		installDate: installDate,
-		trial:       trial,
+		startTime:     time.Now(),
+		installDate:   installDate,
+		trial:         trial,
+		status:        newStatusCenter(),
+		notifications: newNotificationCenter(cfg.Path),
 	}
 	return s
 }

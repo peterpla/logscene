@@ -33,21 +33,23 @@ func newTestServer(t *testing.T) *server {
 	ctx, cancel := context.WithCancel(context.Background())
 	webcamCtx, webcamCancel := context.WithCancel(ctx)
 	s := &server{
-		router:       httprouter.New(),
-		validate:     newValidator(),
-		config:       &Config{Path: pathDir, LogDir: logDir, BaseDir: baseDir, PollSecs: 60},
-		webcams:      newWebcams(),
-		storage:      store,
-		renderer:     NewLocalRenderer(),
-		tz:           &fixedTimezoneClient{tz: "America/Los_Angeles"},
-		solar:        &fixedSolarClient{times: laFixedSolar()},
-		fetcher:      &mockImageFetcher{data: []byte("img"), contentType: "image/jpeg"},
-		ctx:          ctx,
-		cancel:       cancel,
-		webcamCtx:    webcamCtx,
-		webcamCancel: webcamCancel,
-		startTime:   time.Now(),
-		installDate: time.Now(),
+		router:        httprouter.New(),
+		validate:      newValidator(),
+		config:        &Config{Path: pathDir, LogDir: logDir, BaseDir: baseDir, PollSecs: 60},
+		webcams:       newWebcams(),
+		storage:       store,
+		renderer:      NewLocalRenderer(),
+		tz:            &fixedTimezoneClient{tz: "America/Los_Angeles"},
+		solar:         &fixedSolarClient{times: laFixedSolar()},
+		fetcher:       &mockImageFetcher{data: []byte("img"), contentType: "image/jpeg"},
+		ctx:           ctx,
+		cancel:        cancel,
+		webcamCtx:     webcamCtx,
+		webcamCancel:  webcamCancel,
+		startTime:     time.Now(),
+		installDate:   time.Now(),
+		status:        newStatusCenter(),
+		notifications: newNotificationCenter(pathDir),
 	}
 	// Registered last → runs first (LIFO): goroutines exit before temp dirs are removed.
 	t.Cleanup(func() {
@@ -507,8 +509,8 @@ func TestHandleHome(t *testing.T) {
 	}
 	body := w.Body.String()
 
-	// Webcam name and Render button appear on the dashboard.
-	for _, want := range []string{"Test Camera", "Render"} {
+	// Webcam name and Create Video button appear on the dashboard.
+	for _, want := range []string{"Test Camera", "Create Video"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing %q", want)
 		}
@@ -1352,8 +1354,7 @@ func TestHandleHome_webcamCard_active(t *testing.T) {
 	assertHTML(t, body, `Glacier View`)
 	assertHTML(t, body, `bg-success`)
 	assertHTML(t, body, `Active`)
-	assertHTML(t, body, `glacier`)
-	assertHTML(t, body, `Render`)
+	assertHTML(t, body, `Create Video`)
 }
 
 func TestHandleHome_webcamCard_disabled(t *testing.T) {
@@ -1391,7 +1392,7 @@ func TestHandleHome_webcamCard_error(t *testing.T) {
 
 	_, body := getBody(t, srv, "/")
 	assertHTML(t, body, `bg-warning`)
-	assertHTML(t, body, `Error`)
+	assertHTML(t, body, `Issues`) // no StatusCenter vote yet; FirstFailure set → Issues (yellow)
 }
 
 func makeCaptures(t *testing.T, dir string, n int) {
@@ -1555,6 +1556,110 @@ func TestHandleHome_webcamCard_doneForToday(t *testing.T) {
 	assertHTML(t, body, `Done for today`)
 }
 
+func TestHandleHome_webcamCard_initializing(t *testing.T) {
+	srv := newTestServer(t)
+	if err := srv.initTemplates(); err != nil {
+		t.Fatalf("initTemplates: %v", err)
+	}
+	srv.router.GET("/", srv.handleHome())
+
+	wc := newWebcam()
+	wc.Name = "Init Cam"
+	// DayFirst left zero → Initializing path in webcamCard
+	srv.mu.Lock()
+	srv.webcams.Append(wc)
+	srv.mu.Unlock()
+
+	_, body := getBody(t, srv, "/")
+	assertHTML(t, body, "Initializing…") // U+2026 ellipsis matches template
+	assertNoHTML(t, body, `captured today`)
+}
+
+func TestHandleHome_webcamCard_captureCount(t *testing.T) {
+	srv := newTestServer(t)
+	if err := srv.initTemplates(); err != nil {
+		t.Fatalf("initTemplates: %v", err)
+	}
+	srv.router.GET("/", srv.handleHome())
+
+	wc := newWebcam()
+	wc.Name = "Count Cam"
+	wc.IntervalMinutes = 15
+	wc.DayFirst = time.Now().Add(-4 * time.Hour)
+	wc.DayLast = time.Now().Add(4 * time.Hour)
+	wc.NextCaptureAt = time.Now().Add(15 * time.Minute)
+	wc.CaptureCountToday = 3
+	wc.ScheduledCountToday = 8
+	srv.mu.Lock()
+	srv.webcams.Append(wc)
+	srv.mu.Unlock()
+
+	_, body := getBody(t, srv, "/")
+	assertHTML(t, body, `3 of 8 captured today.`)
+}
+
+func TestHandleHome_webcamCard_nextCapturePrefix(t *testing.T) {
+	srv := newTestServer(t)
+	if err := srv.initTemplates(); err != nil {
+		t.Fatalf("initTemplates: %v", err)
+	}
+	srv.router.GET("/", srv.handleHome())
+
+	loc, _ := time.LoadLocation("America/Los_Angeles")
+	wc := newWebcam()
+	wc.Name = "Prefix Cam"
+	wc.DayFirst = time.Date(2026, 6, 6, 13, 0, 0, 0, time.UTC) // 06:00 PDT
+	wc.DayLast = time.Date(2026, 6, 7, 3, 0, 0, 0, time.UTC)   // 20:00 PDT
+	wc.NextCaptureAt = time.Date(2026, 6, 6, 19, 0, 0, 0, time.UTC) // 12:00 PM PDT
+	wc.WebcamLoc = loc
+	srv.mu.Lock()
+	srv.webcams.Append(wc)
+	srv.mu.Unlock()
+
+	_, body := getBody(t, srv, "/")
+	assertHTML(t, body, `Next capture: 12:00 PM PDT`)
+}
+
+func TestHandleHome_openFolder_noCaptures(t *testing.T) {
+	srv := newTestServer(t)
+	if err := srv.initTemplates(); err != nil {
+		t.Fatalf("initTemplates: %v", err)
+	}
+	srv.router.GET("/", srv.handleHome())
+
+	wc := newWebcam()
+	wc.Name = "No Cap Cam"
+	wc.Folder = "no-cap"
+	// 0 jpg files → CanRender=false → Open Folder disabled with tooltip
+	srv.mu.Lock()
+	srv.webcams.Append(wc)
+	srv.mu.Unlock()
+
+	_, body := getBody(t, srv, "/")
+	assertHTML(t, body, `No captures yet`)
+	assertNoHTML(t, body, `hx-get="/open-folder`)
+}
+
+func TestHandleHome_openFolder_withCaptures(t *testing.T) {
+	srv := newTestServer(t)
+	if err := srv.initTemplates(); err != nil {
+		t.Fatalf("initTemplates: %v", err)
+	}
+	srv.router.GET("/", srv.handleHome())
+
+	wc := newWebcam()
+	wc.Name = "With Cap Cam"
+	wc.Folder = "with-cap"
+	makeCaptures(t, filepath.Join(srv.config.BaseDir, wc.Folder), 2)
+	srv.mu.Lock()
+	srv.webcams.Append(wc)
+	srv.mu.Unlock()
+
+	_, body := getBody(t, srv, "/")
+	assertHTML(t, body, `hx-get="/open-folder?folder=with-cap"`)
+	assertNoHTML(t, body, `No captures yet`)
+}
+
 // TestWebcamCard_nextCaptureIncludesTimezone verifies that the displayed time
 // carries the webcam's timezone abbreviation (e.g. "PDT") so the dashboard is
 // unambiguous when the viewer is in a different zone.
@@ -1568,7 +1673,7 @@ func TestWebcamCard_nextCaptureIncludesTimezone(t *testing.T) {
 	wc.DayFirst = time.Date(2026, 6, 6, 13, 0, 0, 0, time.UTC) // 06:00 PDT
 	wc.DayLast = time.Date(2026, 6, 7, 3, 0, 0, 0, time.UTC)   // 20:00 PDT
 
-	d := webcamCard(wc, t.TempDir())
+	d := webcamCard(wc, t.TempDir(), newStatusCenter())
 
 	want := "12:00 PM PDT"
 	if d.NextCapture != want {
@@ -1586,7 +1691,7 @@ func TestWebcamCard_utcFallback(t *testing.T) {
 	wc.DayFirst = time.Date(2026, 6, 6, 6, 0, 0, 0, time.UTC)
 	wc.DayLast = time.Date(2026, 6, 6, 20, 0, 0, 0, time.UTC)
 
-	d := webcamCard(wc, t.TempDir())
+	d := webcamCard(wc, t.TempDir(), newStatusCenter())
 
 	want := "14:30 UTC"
 	if d.NextCapture != want {

@@ -38,6 +38,11 @@
       <li class="nav-item">
         <a href="/logs" class="nav-link{{if eq .Page "logs"}} active{{end}}">Logs</a>
       </li>
+      <li class="nav-item">
+        <a href="/notifications" class="nav-link{{if eq .Page "notifications"}} active{{end}}">
+          Notifications{{if gt .UnreadNotifications 0}} <span class="badge bg-danger ms-1">{{.UnreadNotifications}}</span>{{end}}
+        </a>
+      </li>
     </ul>
     <hr class="border-secondary">
     <small class="text-secondary">&copy; 2026 LogScene</small>
@@ -60,6 +65,11 @@
   </main>
 
   <script src="/static/js/bootstrap.bundle.min.js"></script>
+  <script>
+    document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function(el) {
+      new bootstrap.Tooltip(el);
+    });
+  </script>
 </body>
 </html>
 {{end}}
