@@ -19,6 +19,19 @@ import (
 	"time"
 )
 
+// ErrMalformedTimezone is returned by SetCaptureTimes when the timezone API
+// returns a string that time.LoadLocation cannot parse.
+type ErrMalformedTimezone struct {
+	TZ  string
+	Err error
+}
+
+func (e *ErrMalformedTimezone) Error() string {
+	return fmt.Sprintf("SetCaptureTimes: LoadLocation(%q): %v", e.TZ, e.Err)
+}
+
+func (e *ErrMalformedTimezone) Unwrap() error { return e.Err }
+
 // SetCaptureTimes computes and stores DayFirst, DayLast, and NextCaptureAt for
 // the calendar day that referenceTime falls on in the webcam's timezone.
 //
@@ -68,7 +81,7 @@ func (wc *Webcam) SetCaptureTimes(
 		}
 		loc, err = time.LoadLocation(tz)
 		if err != nil {
-			return fmt.Errorf("SetCaptureTimes: LoadLocation(%q): %w", tz, err)
+			return &ErrMalformedTimezone{TZ: tz, Err: err}
 		}
 	}
 

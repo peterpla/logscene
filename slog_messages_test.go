@@ -270,7 +270,69 @@ func TestSlogMsg_capture_setCaptureTimesFailed(t *testing.T) {
 		t.Fatal("capture goroutine did not exit after SetCaptureTimes failure")
 	}
 
-	assertInDebugOnly(t, "SetCaptureTimes failed at startup, goroutine exiting", userLog, debugLog)
+	assertInDebugOnly(t, "SetCaptureTimes failed", userLog, debugLog)
+}
+
+func TestSlogMsg_capture_malformedTimezone(t *testing.T) {
+	userLog, debugLog := captureLogs(t)
+
+	srv := newTestServer(t)
+	srv.tz = &fixedTimezoneClient{tz: "Not/A/Real/Timezone"}
+
+	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 15)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	srv.webcamWg.Add(1)
+
+	done := make(chan struct{})
+	go func() {
+		capture(ctx, wc, time.Millisecond, srv)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("capture goroutine did not exit after malformed timezone")
+	}
+
+	assertInBoth(t, "webcam timezone is invalid", userLog, debugLog)
+	assertInDebugOnly(t, "SetCaptureTimes: malformed timezone, goroutine exiting", userLog, debugLog)
+
+	if got, _ := srv.status.Get(wc.Name); got != StatusError {
+		t.Errorf("status = %v, want StatusError", got)
+	}
+}
+
+func TestSlogMsg_capture_endAndStartOfDay(t *testing.T) {
+	userLog, debugLog := captureLogs(t)
+
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		t.Fatalf("LoadLocation: %v", err)
+	}
+
+	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 60)
+	wc.mu.Lock()
+	wc.WebcamTZ = "America/Los_Angeles"
+	wc.WebcamLoc = loc
+	wc.DayLast = time.Now().Add(-5 * time.Minute)
+	wc.DayFirst = wc.DayLast.Add(-8 * time.Hour)
+	wc.NextCaptureAt = wc.DayLast
+	wc.CaptureCountToday = 7
+	wc.ScheduledCountToday = 9
+	wc.mu.Unlock()
+
+	tzClient := &fixedTimezoneClient{tz: "America/Los_Angeles"}
+	solar := &fixedSolarClient{times: futureSolarTimes()}
+
+	if err := wc.UpdateNextCapture(context.Background(), tzClient, solar); err != nil {
+		t.Fatalf("UpdateNextCapture: %v", err)
+	}
+
+	assertInBoth(t, "end of day", userLog, debugLog)
+	assertInBoth(t, "start of day", userLog, debugLog)
 }
 
 func TestSlogMsg_capture_autoSuspend(t *testing.T) {

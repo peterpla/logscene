@@ -27,6 +27,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -45,6 +46,29 @@ const (
 	outageAutoSuspendAfter = 14 * 24 * time.Hour   // exit goroutine after 2 weeks
 )
 
+// handleSetCaptureTimesErr routes a SetCaptureTimes error to the appropriate
+// status vote and log entries. Returns true if the caller's goroutine should exit.
+func handleSetCaptureTimesErr(wc *Webcam, err error, srv *server) (exitGoroutine bool) {
+	var mtz *ErrMalformedTimezone
+	if errors.As(err, &mtz) {
+		slog.Info("webcam timezone is invalid — captures cannot be scheduled",
+			"webcam", wc.Name,
+			"tz", mtz.TZ)
+		slog.Debug("SetCaptureTimes: malformed timezone, goroutine exiting",
+			"webcam", wc.Name,
+			"failure_class", fcMalformedTZ,
+			"tz", mtz.TZ,
+			"error", mtz.Err)
+		srv.status.Set(wc.Name, StatusError, "", "")
+		return true
+	}
+	slog.Debug("SetCaptureTimes failed",
+		"webcam", wc.Name,
+		"failure_class", fcNetworkAPI,
+		"error", err)
+	return true
+}
+
 // capture is the long-running goroutine for one webcam.
 func capture(ctx context.Context, wc *Webcam, pollInterval time.Duration, srv *server) {
 	defer srv.webcamWg.Done()
@@ -62,10 +86,9 @@ func capture(ctx context.Context, wc *Webcam, pollInterval time.Duration, srv *s
 	wc.mu.RUnlock()
 
 	if err := wc.SetCaptureTimes(ctx, time.Now(), srv.tz, srv.solar); err != nil {
-		slog.Debug("SetCaptureTimes failed at startup, goroutine exiting",
-			"webcam", wc.Name,
-			"error", err)
-		return
+		if handleSetCaptureTimesErr(wc, err, srv) {
+			return
+		}
 	}
 
 	if tzWasEmpty {
@@ -88,10 +111,9 @@ func capture(ctx context.Context, wc *Webcam, pollInterval time.Duration, srv *s
 	wc.mu.Unlock()
 	if rollover {
 		if err := wc.SetCaptureTimes(ctx, tomorrowRef, srv.tz, srv.solar); err != nil {
-			slog.Debug("SetCaptureTimes (tomorrow) failed at startup, goroutine exiting",
-				"webcam", wc.Name,
-				"error", err)
-			return
+			if handleSetCaptureTimesErr(wc, err, srv) {
+				return
+			}
 		}
 	}
 
@@ -194,10 +216,9 @@ func capture(ctx context.Context, wc *Webcam, pollInterval time.Duration, srv *s
 			slog.Debug("captured", "webcam", wc.Name, "filePath", key, "bytes", size)
 
 			if err := wc.UpdateNextCapture(ctx, srv.tz, srv.solar); err != nil {
-				slog.Debug("UpdateNextCapture failed, goroutine exiting",
-					"webcam", wc.Name,
-					"failure_class", fcNetworkAPI,
-					"error", err)
+				if ctx.Err() == nil {
+					handleSetCaptureTimesErr(wc, err, srv)
+				}
 				return
 			}
 		}
@@ -422,6 +443,23 @@ func (wc *Webcam) UpdateNextCapture(ctx context.Context, tzClient TimezoneClient
 		return nil
 	}
 
+	// Snapshot today's final counts for the end-of-day summary before rollover.
+	wc.mu.RLock()
+	todayCount := wc.CaptureCountToday
+	todaySched := wc.ScheduledCountToday
+	todayLoc := wc.WebcamLoc
+	todayLast := wc.DayLast
+	wc.mu.RUnlock()
+	var todayDate string
+	if todayLoc != nil {
+		todayDate = todayLast.In(todayLoc).Format("2006-01-02")
+	}
+	slog.Info("end of day",
+		"webcam", wc.Name,
+		"date", todayDate,
+		"captured", todayCount,
+		"scheduled", todaySched)
+
 	retries := []time.Duration{5 * time.Second, 15 * time.Second, 30 * time.Second}
 	var err error
 	for i := 0; ; i++ {
@@ -459,15 +497,21 @@ func (wc *Webcam) UpdateNextCapture(ctx context.Context, tzClient TimezoneClient
 	wc.mu.RLock()
 	snapFirst := wc.DayFirst
 	snapLast := wc.DayLast
-	snapNext := wc.NextCaptureAt
-	snapTZ := wc.WebcamTZ
+	snapLoc := wc.WebcamLoc
+	snapSched := wc.ScheduledCountToday
 	wc.mu.RUnlock()
-	slog.Debug("UpdateNextCapture: tomorrow set",
+	var tomorrowDate, firstCapStr, lastCapStr string
+	if snapLoc != nil {
+		tomorrowDate = snapFirst.In(snapLoc).Format("2006-01-02")
+		firstCapStr = snapFirst.In(snapLoc).Format("15:04 MST")
+		lastCapStr = snapLast.In(snapLoc).Format("15:04 MST")
+	}
+	slog.Info("start of day",
 		"webcam", wc.Name,
-		"dayFirst", snapFirst.UTC().Format("15:04:05"),
-		"dayLast", snapLast.UTC().Format("15:04:05"),
-		"nextCaptureAt", snapNext.UTC().Format("15:04:05"),
-		"tz", snapTZ)
+		"date", tomorrowDate,
+		"firstCapture", firstCapStr,
+		"lastCapture", lastCapStr,
+		"scheduled", snapSched)
 	return nil
 }
 
