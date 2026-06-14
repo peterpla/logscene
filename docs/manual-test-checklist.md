@@ -37,6 +37,18 @@ where WebView2 has not propagated into the sandbox, are suitable environments.
 - [ ] Click OK to dismiss the dialog. The app should remain running (SIGINT only).
 - [ ] Verify `logscene-<date>.log` contains: `running in browser mode`.
 
+---
+
+## Render Completion (dashboard.html)
+
+- [ ] Complete a render. The status area should show "Complete — saved to: [path]"
+      with the path as a clickable hyperlink.
+- [ ] Click the hyperlink. The video should open in the default video player.
+- [ ] Click the copy icon. A brief "Copied!" label should appear, then revert to the
+      icon. Paste the path elsewhere to confirm it is correct.
+
+---
+
 ### Single-instance enforcement
 
 - [ ] With the app running, launch a second instance. Second instance should exit

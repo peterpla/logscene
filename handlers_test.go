@@ -2043,3 +2043,34 @@ func TestHandleProbe_dimensions(t *testing.T) {
 		t.Errorf("dimensions: want 3×4, got %d×%d", resp.Width, resp.Height)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// GET /open-file
+// ---------------------------------------------------------------------------
+
+func TestHandleOpenFile_pathOutsideRendersDir(t *testing.T) {
+	srv := newTestServer(t)
+	srv.router.GET("/open-file", srv.handleOpenFile())
+
+	path := filepath.Join(srv.config.BaseDir, "captures", "secret.jpg")
+	req := httptest.NewRequest(http.MethodGet, "/open-file?path="+url.QueryEscape(path), nil)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status: want 400, got %d", w.Code)
+	}
+}
+
+func TestHandleOpenFile_missingParam(t *testing.T) {
+	srv := newTestServer(t)
+	srv.router.GET("/open-file", srv.handleOpenFile())
+
+	req := httptest.NewRequest(http.MethodGet, "/open-file", nil)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status: want 400, got %d", w.Code)
+	}
+}

@@ -212,15 +212,24 @@
             var statusEl = document.getElementById('renderStatus');
             statusEl.textContent = 'Complete — saved to: ';
             var link = document.createElement('a');
-            link.href = 'file:///' + path.replace(/\\/g, '/');
+            link.href = '#';
             link.textContent = path;
+            link.addEventListener('click', function(e) {
+              e.preventDefault();
+              fetch('/open-file?path=' + encodeURIComponent(path));
+            });
             statusEl.appendChild(link);
             var copyBtn = document.createElement('button');
             copyBtn.type = 'button';
             copyBtn.title = 'Copy path';
             copyBtn.style.cssText = 'background:none;border:none;padding:0 0 0 6px;cursor:pointer;vertical-align:middle;color:inherit;opacity:.65;';
             copyBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
-            copyBtn.addEventListener('click', function() { navigator.clipboard.writeText(path); });
+            copyBtn.addEventListener('click', function() {
+              navigator.clipboard.writeText(path);
+              var orig = copyBtn.innerHTML;
+              copyBtn.innerHTML = '<span style="font-size:11px;vertical-align:middle;">Copied!</span>';
+              setTimeout(function() { copyBtn.innerHTML = orig; }, 1500);
+            });
             statusEl.appendChild(copyBtn);
           } else if (data.status === 'error') {
             stopRenderPoll();

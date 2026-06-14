@@ -176,6 +176,7 @@ func main() {
 	srv.router.POST("/reload", srv.handleReload())
 	srv.router.GET("/notifications", srv.handleGetNotifications())
 	srv.router.POST("/notifications/:id/dismiss", srv.handleDismissNotification())
+	srv.router.GET("/open-file", srv.handleOpenFile())
 	srv.router.GET("/open-folder", srv.handleOpenFolder())
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

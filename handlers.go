@@ -971,6 +971,26 @@ func (s *server) handleDismissNotification() httprouter.Handle {
 	}
 }
 
+// handleOpenFile opens a rendered video file in the OS default application.
+// The path parameter is validated to stay within BaseDir/renders/.
+func (s *server) handleOpenFile() httprouter.Handle {
+	return func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+		path := r.URL.Query().Get("path")
+		if path == "" {
+			http.Error(w, "path required", http.StatusBadRequest)
+			return
+		}
+		rendersDir := filepath.Clean(filepath.Join(s.config.BaseDir, "renders"))
+		resolved := filepath.Clean(path)
+		if !strings.HasPrefix(resolved, rendersDir+string(filepath.Separator)) {
+			http.Error(w, "invalid file path", http.StatusBadRequest)
+			return
+		}
+		exec.Command("cmd", "/c", "start", "", resolved).Start() //nolint:errcheck
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
 // handleOpenFolder opens the webcam's capture folder in Windows Explorer.
 // The folder parameter is validated to stay within BaseDir.
 func (s *server) handleOpenFolder() httprouter.Handle {
