@@ -1,5 +1,5 @@
 {{define "content"}}
-{{if and (not .Trial.CapturesStopped) (not .Trial.IsWarning)}}
+{{if and (not .Trial.IsExpired) (not .Trial.IsWarning)}}
 {{if le .DaysRemaining 4}}
 <p class="text-warning small mb-3">Trial expires {{.ExpiryDate}} — {{.DaysRemaining}} day{{if ne .DaysRemaining 1}}s{{end}} remaining. <a href="#">Upgrade</a> to keep captures running.</p>
 {{else}}

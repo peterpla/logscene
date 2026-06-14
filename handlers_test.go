@@ -1479,6 +1479,7 @@ func TestHandleHome_trialWarning(t *testing.T) {
 	assertHTML(t, body, `alert-warning`)
 	assertHTML(t, body, `free trial ends today`)
 	assertNoHTML(t, body, `alert-danger`)
+	assertNoHTML(t, body, `days remaining`)
 }
 
 func TestHandleHome_trialExpired(t *testing.T) {
@@ -1495,6 +1496,7 @@ func TestHandleHome_trialExpired(t *testing.T) {
 	assertHTML(t, body, `nav-link-disabled`)
 	assertHTML(t, body, `disabled title="Upgrade to add webcams"`)
 	assertNoHTML(t, body, `Upgrade to render`)
+	assertNoHTML(t, body, `days remaining`)
 }
 
 // ---------------------------------------------------------------------------
