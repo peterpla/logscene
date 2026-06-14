@@ -434,3 +434,35 @@ func TestSlogMsg_handleReload_complete(t *testing.T) {
 	}
 	assertInDebugOnly(t, "handleReload: complete", userLog, debugLog)
 }
+
+// ─── capture.go — odd-dimension startup ──────────────────────────────────────
+
+func TestSlogMsg_capture_oddDimensions(t *testing.T) {
+	srv := newTestServer(t)
+	srv.solar = &fixedSolarClient{times: futureSolarTimes()}
+
+	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 15)
+	wc.OddDimensions = true
+	wc.ProbeWidth = 1279
+	wc.ProbeHeight = 719
+
+	userLog, debugLog := captureLogs(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	srv.webcamWg.Add(1)
+	go capture(ctx, wc, time.Millisecond, srv)
+
+	// Poll until the notification fires (it's added synchronously after the slog entry).
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+		if srv.notifications.HasUndismissed("odd-dim-test-cam") {
+			break
+		}
+	}
+	cancel()
+	srv.webcamWg.Wait()
+
+	assertInBoth(t, "odd frame dimensions", userLog, debugLog)
+}

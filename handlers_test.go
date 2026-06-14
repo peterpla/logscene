@@ -762,6 +762,79 @@ func TestHandleNew_folderTraversal(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// POST /new — OddDimensions from probe fields
+// ---------------------------------------------------------------------------
+
+func TestHandleNew_oddDimensions_setFromProbeFields(t *testing.T) {
+	srv := newTestServer(t)
+	srv.router.POST("/new", srv.handleNew())
+
+	form := url.Values{}
+	form.Set("name", "Odd Cam")
+	form.Set("webcamUrl", "http://example.com/cam.jpg")
+	form.Set("latitude", "37.77")
+	form.Set("longitude", "-122.42")
+	form.Set("intervalMinutes", "15")
+	form.Set("folder", "odd-cam")
+	form.Set("firstOption", "firstSunrise")
+	form.Set("lastOption", "lastSunset")
+	form.Set("probeWidth", "1279")  // odd
+	form.Set("probeHeight", "719") // odd
+
+	req := httptest.NewRequest(http.MethodPost, "/new", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("want 303, got %d: %s", w.Code, w.Body.String())
+	}
+	srv.mu.RLock()
+	wc := (*srv.webcams)[0]
+	srv.mu.RUnlock()
+
+	if !wc.OddDimensions {
+		t.Error("OddDimensions should be true for 1279×719")
+	}
+	if wc.ProbeWidth != 1279 || wc.ProbeHeight != 719 {
+		t.Errorf("ProbeWidth/Height: want 1279×719, got %d×%d", wc.ProbeWidth, wc.ProbeHeight)
+	}
+}
+
+func TestHandleNew_evenDimensions_notOdd(t *testing.T) {
+	srv := newTestServer(t)
+	srv.router.POST("/new", srv.handleNew())
+
+	form := url.Values{}
+	form.Set("name", "Even Cam")
+	form.Set("webcamUrl", "http://example.com/cam.jpg")
+	form.Set("latitude", "37.77")
+	form.Set("longitude", "-122.42")
+	form.Set("intervalMinutes", "15")
+	form.Set("folder", "even-cam")
+	form.Set("firstOption", "firstSunrise")
+	form.Set("lastOption", "lastSunset")
+	form.Set("probeWidth", "1280")
+	form.Set("probeHeight", "720")
+
+	req := httptest.NewRequest(http.MethodPost, "/new", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("want 303, got %d: %s", w.Code, w.Body.String())
+	}
+	srv.mu.RLock()
+	wc := (*srv.webcams)[0]
+	srv.mu.RUnlock()
+
+	if wc.OddDimensions {
+		t.Error("OddDimensions should be false for 1280×720")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // GET /info
 // ---------------------------------------------------------------------------
 

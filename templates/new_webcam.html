@@ -269,6 +269,8 @@
     </div>
   </div>
 
+  <input type="hidden" name="probeWidth"  id="probeWidth"  value="0">
+  <input type="hidden" name="probeHeight" id="probeHeight" value="0">
   <button type="submit" class="btn btn-primary">Add Webcam</button>
   <a href="/" class="btn btn-link">Cancel</a>
 </form>
@@ -386,6 +388,8 @@
         imageBytesOverride = data.bytes;
         var mins = parseInt(document.getElementById('intervalMinutes').value);
         updateStats(mins);
+        document.getElementById('probeWidth').value  = data.width  || 0;
+        document.getElementById('probeHeight').value = data.height || 0;
         if (data.image) {
           document.getElementById('testShotImg').src = data.image;
           document.getElementById('testShotPreview').style.display = '';

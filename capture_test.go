@@ -825,13 +825,15 @@ func BenchmarkCaptureViaFfmpeg_noCrop(b *testing.B) {
 }
 
 func BenchmarkCaptureViaFfmpeg_withCrop(b *testing.B) {
+	// crop=trunc(iw/2)*2:trunc(ih/2)*2 is now applied unconditionally inside
+	// captureViaFfmpeg, so this benchmark measures the same path as noCrop.
+	// Retained as a regression reference to confirm overhead remains negligible.
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		b.Skip("ffmpeg not on PATH")
 	}
 	store := NewMemStorage()
 	ctx := context.Background()
-	args := []string{"-f", "lavfi", "-i", "color=size=1279x719:rate=1", "-frames:v", "1",
-		"-vf", "crop=trunc(iw/2)*2:trunc(ih/2)*2"}
+	args := []string{"-f", "lavfi", "-i", "color=size=1279x719:rate=1", "-frames:v", "1"}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if _, err := captureViaFfmpeg(ctx, args, store, "bench/frame.jpg"); err != nil {
@@ -997,5 +999,80 @@ func TestCapture_seeding_scheduledCountToday(t *testing.T) {
 	wc.mu.RUnlock()
 	if got != 13 { // int(3h / 15min) + 1 = 12 + 1
 		t.Errorf("ScheduledCountToday: want 13, got %d", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// capture() goroutine — odd-dimension startup handling
+// ---------------------------------------------------------------------------
+
+// oddDimWebcam returns a webcam with OddDimensions pre-set for 1279×719.
+func oddDimWebcam(t *testing.T) *Webcam {
+	t.Helper()
+	wc := testWebcam(t, flagFirstSunrise, flagLastSunset, 15)
+	wc.OddDimensions = true
+	wc.ProbeWidth = 1279
+	wc.ProbeHeight = 719
+	return wc
+}
+
+// waitForNotification polls until an undismissed notification with the given ID exists.
+func waitForNotification(t *testing.T, nc *NotificationCenter, id string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+		if nc.HasUndismissed(id) {
+			return
+		}
+	}
+	t.Fatalf("timed out waiting for notification %q", id)
+}
+
+func TestCapture_oddDimensions_notificationAndStatus(t *testing.T) {
+	srv := newTestServer(t)
+	srv.solar = &fixedSolarClient{times: futureSolarTimes()}
+	wc := oddDimWebcam(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	srv.webcamWg.Add(1)
+	go capture(ctx, wc, time.Millisecond, srv)
+
+	waitForNotification(t, srv.notifications, "odd-dim-test-cam")
+
+	s, ok := srv.status.Get(wc.Name)
+	if !ok || s != StatusIssues {
+		t.Errorf("status: want StatusIssues, got %v (ok=%v)", s, ok)
+	}
+}
+
+func TestCapture_oddDimensions_idempotent(t *testing.T) {
+	srv := newTestServer(t)
+	srv.solar = &fixedSolarClient{times: futureSolarTimes()}
+	wc := oddDimWebcam(t)
+
+	// First goroutine run.
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	srv.webcamWg.Add(1)
+	go capture(ctx1, wc, time.Millisecond, srv)
+	waitForNotification(t, srv.notifications, "odd-dim-test-cam")
+	cancel1()
+	srv.webcamWg.Wait()
+
+	countBefore := len(srv.notifications.All())
+
+	// Second goroutine run — should not add a duplicate notification.
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	t.Cleanup(cancel2)
+	srv.webcamWg.Add(1)
+	go capture(ctx2, wc, time.Millisecond, srv)
+	// Give the goroutine enough time to reach the odd-dim block.
+	waitForNotification(t, srv.notifications, "odd-dim-test-cam")
+	cancel2()
+	srv.webcamWg.Wait()
+
+	if got := len(srv.notifications.All()); got != countBefore {
+		t.Errorf("idempotent: want %d notifications after second run, got %d", countBefore, got)
 	}
 }

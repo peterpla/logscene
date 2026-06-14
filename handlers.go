@@ -308,6 +308,20 @@ func (s *server) handleNew() httprouter.Handle {
 			return
 		}
 
+		// Determine odd-pixel dimensions from the test-shot probe or a fresh re-probe.
+		probeWidth, _ := strconv.Atoi(r.FormValue("probeWidth"))
+		probeHeight, _ := strconv.Atoi(r.FormValue("probeHeight"))
+		if probeWidth == 0 || probeHeight == 0 {
+			probeCtx, probeCancel := context.WithTimeout(r.Context(), 15*time.Second)
+			probeWidth, probeHeight = probeWebcamDimensions(probeCtx, wc)
+			probeCancel()
+		}
+		if probeWidth > 0 && probeHeight > 0 {
+			wc.ProbeWidth = probeWidth
+			wc.ProbeHeight = probeHeight
+			wc.OddDimensions = probeWidth%2 != 0 || probeHeight%2 != 0
+		}
+
 		// Reject folder values that escape BaseDir (path traversal).
 		base := filepath.Clean(s.config.BaseDir)
 		resolved := filepath.Clean(filepath.Join(base, wc.Folder))
@@ -887,6 +901,34 @@ func probeViaFfmpeg(ctx context.Context, args []string) ([]byte, error) {
 		return nil, fmt.Errorf("probeViaFfmpeg: ffmpeg: %w: %s", err, bytes.TrimSpace(out))
 	}
 	return os.ReadFile(tmpPath)
+}
+
+// probeWebcamDimensions captures one frame from wc and returns its pixel dimensions.
+// Returns 0, 0 on any failure; OddDimensions is simply not set in that case.
+func probeWebcamDimensions(ctx context.Context, wc *Webcam) (w, h int) {
+	var data []byte
+	var err error
+	switch wc.SourceType {
+	case "usb":
+		data, err = probeViaFfmpeg(ctx, []string{"-f", "dshow", "-i", "video=" + wc.DeviceName, "-frames:v", "1"})
+	case "stream":
+		data, err = probeViaFfmpeg(ctx, []string{"-i", wc.URL, "-frames:v", "1"})
+	default: // "url"
+		req, reqErr := http.NewRequestWithContext(ctx, http.MethodGet, wc.URL, nil)
+		if reqErr != nil {
+			return 0, 0
+		}
+		resp, doErr := http.DefaultClient.Do(req)
+		if doErr != nil {
+			return 0, 0
+		}
+		defer resp.Body.Close()
+		data, err = io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	}
+	if err != nil {
+		return 0, 0
+	}
+	return jpegDimensions(data)
 }
 
 // handleGetLatlong renders the Find Coordinates stub page.

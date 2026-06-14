@@ -127,6 +127,9 @@ func capture(ctx context.Context, wc *Webcam, pollInterval time.Duration, srv *s
 	snapInterval := wc.IntervalMinutes
 	snapFirstFlags := wc.FirstFlags
 	snapLastFlags := wc.LastFlags
+	snapOddDim := wc.OddDimensions
+	snapPW := wc.ProbeWidth
+	snapPH := wc.ProbeHeight
 	wc.mu.RUnlock()
 
 	// Seed CaptureCountToday by counting existing capture files for today's
@@ -153,6 +156,28 @@ func capture(ctx context.Context, wc *Webcam, pollInterval time.Duration, srv *s
 			wc.ScheduledCountToday = int(snapLast.Sub(snapFirst)/interval) + 1
 		}
 		wc.mu.Unlock()
+	}
+
+	// Odd-dimension startup: log, notify (idempotent), and vote StatusIssues.
+	if snapOddDim && snapPW > 0 && snapPH > 0 {
+		w2 := (snapPW / 2) * 2
+		h2 := (snapPH / 2) * 2
+		slog.Info("odd frame dimensions — cropping each capture",
+			"webcam", wc.Name,
+			"width", snapPW,
+			"height", snapPH,
+			"croppedWidth", w2,
+			"croppedHeight", h2)
+		notifID := "odd-dim-" + wc.Name
+		if !srv.notifications.HasUndismissed(notifID) {
+			srv.notifications.Add(Notification{
+				ID:      notifID,
+				Title:   "Auto-cropping to even dimensions",
+				Message: fmt.Sprintf("Camera %q outputs %d×%d frames. LogScene automatically crops each capture to %d×%d to ensure videos render correctly.", wc.Name, snapPW, snapPH, w2, h2),
+				Buttons: ButtonDismissOnly,
+			})
+		}
+		srv.status.Set(wc.Name, StatusIssues, "Auto-cropping to even dimensions", "")
 	}
 
 	var solarDate string
@@ -399,6 +424,7 @@ func captureViaFfmpeg(ctx context.Context, args []string, store Storage, key str
 	defer os.Remove(tmpPath)
 
 	cmdArgs := append([]string{"-y"}, args...)
+	cmdArgs = append(cmdArgs, "-vf", "crop=trunc(iw/2)*2:trunc(ih/2)*2")
 	cmdArgs = append(cmdArgs, "-update", "1", tmpPath)
 	cmd := exec.CommandContext(ctx, "ffmpeg", cmdArgs...)
 	if out, err := cmd.CombinedOutput(); err != nil {

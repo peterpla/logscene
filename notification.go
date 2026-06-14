@@ -92,6 +92,18 @@ func (nc *NotificationCenter) UnreadCount() int {
 	return n
 }
 
+// HasUndismissed returns true if an entry with the given ID exists and has not been dismissed.
+func (nc *NotificationCenter) HasUndismissed(id string) bool {
+	nc.mu.RLock()
+	defer nc.mu.RUnlock()
+	for _, e := range nc.entries {
+		if e.ID == id && !e.Dismissed {
+			return true
+		}
+	}
+	return false
+}
+
 // All returns a snapshot of all entries, newest first.
 func (nc *NotificationCenter) All() []Notification {
 	nc.mu.RLock()

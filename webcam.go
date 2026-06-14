@@ -66,6 +66,9 @@ type Webcam struct {
 	WebcamTZ   string `json:"webcamTZ,omitempty"`            // IANA timezone name, cached after first lookup
 	Disabled        bool `json:"disabled,omitempty"`        // true = skip at startup; operator-set
 	RecoveryPending bool `json:"recoveryPending,omitempty"` // true after Keep Trying on auto-suspend modal
+	OddDimensions   bool `json:"oddDimensions,omitempty"`   // camera outputs odd-pixel-dimension frames; crop filter applied
+	ProbeWidth      int  `json:"probeWidth,omitempty"`      // frame width from probe; used for odd-dimension notification
+	ProbeHeight     int  `json:"probeHeight,omitempty"`     // frame height from probe
 
 	// --- runtime fields (not persisted) ---
 	mu           sync.RWMutex   `json:"-"`
