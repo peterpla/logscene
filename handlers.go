@@ -190,10 +190,13 @@ func (s *server) handleHome() httprouter.Handle {
 		trial := s.trial
 		s.mu.RUnlock()
 
-		daysElapsed := int(time.Since(s.installDate).Hours() / 24)
-		daysRemaining := 30 - daysElapsed
-		if daysRemaining < 0 {
-			daysRemaining = 0
+		daysRemaining := 0
+		if !s.config.Dev {
+			daysElapsed := int(time.Since(s.installDate).Hours() / 24)
+			daysRemaining = 30 - daysElapsed
+			if daysRemaining < 0 {
+				daysRemaining = 0
+			}
 		}
 		data := dashboardData{
 			Page:                "dashboard",
@@ -330,7 +333,7 @@ func (s *server) handleNew() httprouter.Handle {
 			http.Error(w, "upgrade required — trial captures have stopped", http.StatusForbidden)
 			return
 		}
-		if len(*s.webcams) >= 1 {
+		if !s.config.Dev && len(*s.webcams) >= 1 {
 			s.mu.Unlock()
 			http.Error(w, "trial limited to 1 webcam — upgrade to add more", http.StatusForbidden)
 			return

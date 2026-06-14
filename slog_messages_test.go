@@ -87,6 +87,20 @@ func TestSlogMsg_config_resolved(t *testing.T) {
 	assertInDebugOnly(t, "config resolved", userLog, debugLog)
 }
 
+func TestSlogMsg_config_devMode(t *testing.T) {
+	userLog, debugLog := captureLogs(t)
+
+	var cfg Config
+	cfg.loadFrom(flag.NewFlagSet("test", flag.ContinueOnError), nil, func(k string) string {
+		if k == "LOGSCENE_DEV" {
+			return "1"
+		}
+		return ""
+	})
+
+	assertInBoth(t, "dev mode enabled — trial suppressed, webcam cap lifted", userLog, debugLog)
+}
+
 // ─── main.go — buildStorage ───────────────────────────────────────────────────
 
 func TestSlogMsg_buildStorage_gcs(t *testing.T) {

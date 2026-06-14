@@ -20,6 +20,7 @@ type Config struct {
 	LogDir   string // directory for daily rotating log files
 	Storage  string // storage backend: "local", "gcs", "s3"
 	BaseDir  string // root storage location; webcam folder names are relative to this
+	Dev      bool   // LOGSCENE_DEV: suppresses trial UI and lifts 1-webcam cap; delete when license keys ship
 }
 
 // Load populates Config from the process flags and environment.
@@ -46,6 +47,10 @@ func (c *Config) loadFrom(fs *flag.FlagSet, args []string, getenv func(string) s
 	c.LogDir  = filepath.ToSlash(coalesce(*logdir,  getenv("LOGSCENE_LOGDIR"),  "./logs"))
 	c.Storage = coalesce(*storage, getenv("LOGSCENE_STORAGE"), "local")
 	c.BaseDir = filepath.ToSlash(coalesce(*base,    getenv("LOGSCENE_BASE"),    "./captures"))
+	c.Dev     = getenv("LOGSCENE_DEV") != ""
+	if c.Dev {
+		slog.Info("dev mode enabled — trial suppressed, webcam cap lifted")
+	}
 
 	if *poll != 0 {
 		c.PollSecs = *poll
